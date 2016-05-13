@@ -18,8 +18,13 @@ export class World {
         this.camera = new Camera(canvas);
         this.mouseEventManager = new MouseEventManager(this.canvas, this.scene, this.camera);
 
+        this.scene.onAdd((object:Object3D) => this.mouseEventManager.addListeners([object]));
+
         // Слушаем действия мыши
         this.mouseEventManager.listen();
+
+        // Заполняем сцену объектами
+        this.scene.fill();
     }
 
     // Каждый фрейм запускать рендер
@@ -65,7 +70,7 @@ class MouseEventManager {
     }
 
     // Устанавливаем слушателей на события мыши
-    listen () {
+    listen() {
         this.canvas
             .getJQuery()
             .mousedown((event:JQueryMouseEventObject) => this.move(event));
@@ -87,24 +92,38 @@ class MouseEventManager {
         let event = new MouseDownEvent();
 
         // Для каждого объекта на сцене выполняем проверку
-        this.objects.forEach((object:Object3D) => {
+        this.objects.forEach((object:Object3DWithEvents) => {
+            // Получаем пересечение луча с объектом
             let intersection = this.raycaster.intersectObject(object)[0];
-            if (intersection.point) {
-                event.setIntersection(intersection);
-                (<MouseDownInterface> object).onMouseDown(event);
+
+            // Пересечения нет
+            if (!intersection || !intersection.point) {
+                return;
             }
+
+            // Устанавливаем пересечение для события
+            event.setIntersection(intersection);
+
+            // Отправляем событие объекту
+            object.mouseEvents.onMouseDown(event);
         });
     }
 
     // Получить объекты, отслеживающие нажатия мыши
     getListeners(children:Object3D[]):Object3D[] {
         // Получаем слушателей среди дочерних объектов
-        var childListeners = children.filter((object:Object3D) => ('onMouseDown' in object));
+        var childListeners = children.filter((object:Object3DWithEvents) => !!object.mouseEvents);
 
         // Добавляем к этому результату слушателей среди дочерних элементов дочерних элементов
         return children.reduce((result:Object3D[], child:Object3D) => {
             return result.concat(this.getListeners(child.children));
         }, childListeners);
+    }
+
+    // Добавить слушаетелей
+    addListeners(objects:Object3D[]):MouseEventManager {
+        this.objects = this.objects.concat(this.getListeners(objects));
+        return this;
     }
 }
 
@@ -187,9 +206,24 @@ class Renderer extends THREE.WebGLRenderer {
 
 // Сцена
 class Scene extends THREE.Scene {
-    constructor() {
-        super();
-        this.adds(new Wall(), new Light());
+    protected onAddCallbacks:Function[];
+
+    add(object:THREE.Object3D):void {
+        super.add(object);
+        this.onAddCallbacks.forEach((callback: (object:Object3D) => void) => callback(object));
+    }
+
+    // Действие при добавлении объекта на сцену
+    onAdd(callback:(object:Object3D) => void): Scene{
+        this.onAddCallbacks.push(callback);
+        return this;
+    }
+
+    // Заполнить сцену объектами
+    fill(){
+        var wall = new Wall();
+        wall.mouseEvents = new CubeClickEvents(this);
+        this.adds(wall, new Light());
     }
 
     // Добавить все объекты
@@ -209,12 +243,32 @@ class Light extends THREE.PointLight {
     }
 }
 
-// Стена
-class Wall extends THREE.Mesh implements MouseDownInterface {
-    onMouseDown(event:MouseDownEvent):boolean {
+class MouseEvents {
+    public onMouseDown(event:MouseDownEvent) {
         console.log(event);
-        return true;
     }
+}
+
+class CubeClickEvents extends MouseEvents {
+    constructor(protected scene:Scene) {
+        super();
+    }
+
+    public onMouseDown(event:MouseDownEvent) {
+        var wall = new Wall();
+        wall.position.copy(event.getIntersection().point.clone());
+        wall.mouseEvents = this;
+        this.scene.add(wall);
+    }
+}
+
+class Object3DWithEvents extends Object3D {
+    public mouseEvents:MouseEvents;
+}
+
+// Стена
+class Wall extends THREE.Mesh {
+    public mouseEvents:MouseEvents;
 
     constructor() {
         super(
@@ -224,17 +278,16 @@ class Wall extends THREE.Mesh implements MouseDownInterface {
     }
 }
 
-// Интерфейс для объекта сцены, у которого есть события мыши
-interface MouseDownInterface {
-    onMouseDown(event:MouseDownEvent):boolean;
-}
-
 class MouseDownEvent {
     protected intersection:THREE.Intersection;
 
     setIntersection(intersection:THREE.Intersection) {
         this.intersection = intersection;
         return this;
+    }
+
+    getIntersection():THREE.Intersection {
+        return this.intersection;
     }
 }
 
