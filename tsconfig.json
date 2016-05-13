@@ -1,0 +1,13 @@
+{
+  "compilerOptions": {
+    "module": "commonjs",
+    "noImplicitAny": true,
+    "removeComments": true,
+    "preserveConstEnums": false,
+    "sourceMap": true
+  },
+  "files": [
+    "typings/main.d.ts",
+    "assets/ts/main.ts"
+  ]
+}

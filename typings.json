@@ -1,0 +1,6 @@
+{
+  "ambientDependencies": {
+    "jquery": "registry:dt/jquery#1.10.0+20160316155526",
+    "three": "registry:dt/three#0.0.0+20160331065219"
+  }
+}
