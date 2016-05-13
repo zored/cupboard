@@ -3,6 +3,9 @@ import V2 = THREE.Vector2;
 import V3 = THREE.Vector3;
 import Object3D = THREE.Object3D;
 import Vector2 = THREE.Vector2;
+import Mesh = THREE.Mesh;
+import Intersection = THREE.Intersection;
+import BufferGeometry = THREE.BufferGeometry;
 
 // Мир шкафа
 export class World {
@@ -18,13 +21,11 @@ export class World {
         this.camera = new Camera(canvas);
         this.mouseEventManager = new MouseEventManager(this.canvas, this.scene, this.camera);
 
-        this.scene.onAdd((object:Object3D) => this.mouseEventManager.addListeners([object]));
-
         // Слушаем действия мыши
-        this.mouseEventManager.listen();
+        this.mouseEventManager.startListen();
 
         // Заполняем сцену объектами
-        this.scene.fill();
+        this.scene.fill(this.mouseEventManager);
     }
 
     // Каждый фрейм запускать рендер
@@ -60,25 +61,58 @@ class MouseRaycaster extends THREE.Raycaster {
     }
 }
 
+// Типы событий мыши
+enum MouseEventType {
+    Down,
+    Up,
+    Move
+}
+
+interface MouseEventsContainer {
+    [type:number]:MouseCallback[]
+}
+
+interface ObjectCallbacks {
+    callbacks:MouseCallback[],
+    object:Object3D
+}
+
+interface MouseObjectEventsContainer {
+    [type:number]:ObjectCallbacks[]
+}
+
+
+type MouseCallback = (event:MyMouseEvent) => void;
+
 class MouseEventManager {
-    protected objects:Object3D[];
+    protected objects:Object3D[] = [];
     protected raycaster:MouseRaycaster;
+    protected plane:ClickPlane;
+    protected objectsEvents:MouseObjectEventsContainer = {};
+    protected planeEvents:MouseEventsContainer = {};
 
     constructor(protected canvas:Canvas, scene:Scene, protected camera:Camera) {
-        this.objects = this.getListeners(scene.children);
         this.raycaster = new MouseRaycaster(camera);
+        this.plane = scene.getClickPlane();
     }
 
     // Устанавливаем слушателей на события мыши
-    listen() {
+    startListen() {
         this.canvas
             .getJQuery()
-            .mousedown((event:JQueryMouseEventObject) => this.move(event));
+            .mousedown((event:JQueryMouseEventObject) => this.trigger(event, MouseEventType.Down))
+            .mousemove((event:JQueryMouseEventObject) => this.trigger(event, MouseEventType.Move))
+            .mouseup((event:JQueryMouseEventObject) => this.trigger(event, MouseEventType.Up))
         return this;
     }
 
+    // Получить первое пересечение луча с объектом:
+    protected intersect(object:Object3D):Intersection {
+        return this.raycaster.intersectObject(object)[0];
+    }
+
     // Событие при перемещении мыши
-    protected move(jqEvent:JQueryMouseEventObject) {
+    protected trigger(jqEvent:JQueryMouseEventObject, type:MouseEventType) {
         // Получаем положение мыши
         var mouse = new V2(jqEvent.offsetX, jqEvent.offsetY);
 
@@ -89,12 +123,18 @@ class MouseEventManager {
         this.raycaster.setPosition(position);
 
         // Событие
-        let event = new MouseDownEvent();
+        let event = new MyMouseEvent();
+
+        // Установить пересечение с плоскостью
+        event.setPlaneIntersection(this.intersect(this.plane));
+
+        // Вызываем события
+        this.getPlaneCallbacks(type).forEach((callback:MouseCallback) => callback(event));
 
         // Для каждого объекта на сцене выполняем проверку
-        this.objects.forEach((object:Object3DWithEvents) => {
+        this.objects.forEach((object:Object3D) => {
             // Получаем пересечение луча с объектом
-            let intersection = this.raycaster.intersectObject(object)[0];
+            let intersection = this.intersect(object);
 
             // Пересечения нет
             if (!intersection || !intersection.point) {
@@ -105,24 +145,53 @@ class MouseEventManager {
             event.setIntersection(intersection);
 
             // Отправляем событие объекту
-            object.mouseEvents.onMouseDown(event);
+            this.getObjectCallbacks(type, object).forEach((callback:MouseCallback) => callback(event));
         });
     }
 
-    // Получить объекты, отслеживающие нажатия мыши
-    getListeners(children:Object3D[]):Object3D[] {
-        // Получаем слушателей среди дочерних объектов
-        var childListeners = children.filter((object:Object3DWithEvents) => !!object.mouseEvents);
+    // Получить колбэки
+    getObjectCallbacks(type:MouseEventType, object:Object3D):MouseCallback[] {
+        if (!this.objectsEvents[type]) return [];
 
-        // Добавляем к этому результату слушателей среди дочерних элементов дочерних элементов
-        return children.reduce((result:Object3D[], child:Object3D) => {
-            return result.concat(this.getListeners(child.children));
-        }, childListeners);
+        let objectCallbacks = this.objectsEvents[type].filter(
+            (objectCallbacks:ObjectCallbacks) => (objectCallbacks.object == object)
+        )[0];
+
+        return objectCallbacks ? objectCallbacks.callbacks : [];
     }
 
-    // Добавить слушаетелей
-    addListeners(objects:Object3D[]):MouseEventManager {
-        this.objects = this.objects.concat(this.getListeners(objects));
+    getPlaneCallbacks(type:MouseEventType):MouseCallback[] {
+        return this.planeEvents[type] || [];
+    }
+
+    // Добавить событие на плоскость
+    onPlane(type:MouseEventType, callback:MouseCallback):MouseEventManager {
+        if (!this.planeEvents[type]) this.planeEvents[type] = [];
+        this.planeEvents[type].push(callback);
+        return this;
+    }
+
+    // Добавить событие на объект
+    onObject(type:MouseEventType, object:Object3D, callback:MouseCallback):MouseEventManager {
+        if (!this.objectsEvents[type]) this.objectsEvents[type] = [];
+
+        let objectCallbacks = this.objectsEvents[type].filter(
+            (objectCallbacks:ObjectCallbacks) => (objectCallbacks.object == object)
+        )[0];
+
+        var hasListener = this.objects.some((object_:Object3D) => object_ == object);
+
+        if (!hasListener) this.objects.push(object);
+
+        if (!objectCallbacks) {
+            this.objectsEvents[type].push({
+                object: object,
+                callbacks: [callback]
+            });
+            return this;
+        }
+
+        objectCallbacks.callbacks.push(callback);
         return this;
     }
 }
@@ -171,14 +240,10 @@ export class Canvas {
 // Камера
 class Camera extends THREE.PerspectiveCamera {
     constructor(canvas:Canvas) {
-        super(20, canvas.getAspect(), 0.1, 1000);
+        super(75, canvas.getAspect(), 0.1, 1000);
 
         // Сдвигаемся
-        this.position.add(new V3(
-            300,
-            300,
-            300
-        ));
+        this.position.set(40, 0, 260);
 
         // Смотрим в начало координат
         this.lookAt(new V3());
@@ -206,24 +271,17 @@ class Renderer extends THREE.WebGLRenderer {
 
 // Сцена
 class Scene extends THREE.Scene {
-    protected onAddCallbacks:Function[];
+    protected clickPlane:ClickPlane;
 
-    add(object:THREE.Object3D):void {
-        super.add(object);
-        this.onAddCallbacks.forEach((callback: (object:Object3D) => void) => callback(object));
-    }
-
-    // Действие при добавлении объекта на сцену
-    onAdd(callback:(object:Object3D) => void): Scene{
-        this.onAddCallbacks.push(callback);
-        return this;
+    constructor() {
+        super();
+        this.clickPlane = new ClickPlane();
+        this.add(this.clickPlane);
     }
 
     // Заполнить сцену объектами
-    fill(){
-        var wall = new Wall();
-        wall.mouseEvents = new CubeClickEvents(this);
-        this.adds(wall, new Light());
+    fill(mouseEventManager:MouseEventManager) {
+        this.adds(new Cupboard(mouseEventManager), new Light());
     }
 
     // Добавить все объекты
@@ -233,68 +291,65 @@ class Scene extends THREE.Scene {
         });
         return this;
     }
+
+    // Получить плоскость для клика
+    getClickPlane():ClickPlane {
+        return this.clickPlane;
+    }
 }
 
 // Освещение
 class Light extends THREE.PointLight {
     constructor() {
         super(THREE.ColorKeywords.white);
-        this.position.add(new V3(300, 200, -300));
+        this.position.add(new V3(200, 300, 500));
+        this.intensity = 0.7;
     }
-}
-
-class MouseEvents {
-    public onMouseDown(event:MouseDownEvent) {
-        console.log(event);
-    }
-}
-
-class CubeClickEvents extends MouseEvents {
-    constructor(protected scene:Scene) {
-        super();
-    }
-
-    public onMouseDown(event:MouseDownEvent) {
-        var wall = new Wall();
-        wall.position.copy(event.getIntersection().point.clone());
-        wall.mouseEvents = this;
-        this.scene.add(wall);
-    }
-}
-
-class Object3DWithEvents extends Object3D {
-    public mouseEvents:MouseEvents;
 }
 
 // Стена
 class Wall extends THREE.Mesh {
-    public mouseEvents:MouseEvents;
-
-    constructor() {
+    constructor(size:V3, position:V3) {
         super(
-            new WallGeometry(new V3(50, 50, 50)),
+            new WallGeometry(),
             new WallMaterial()
         );
+
+        this.scale.copy(size);
+        this.position.copy(position);
     }
 }
 
-class MouseDownEvent {
-    protected intersection:THREE.Intersection;
+// Событие при нажатии мыши>
+class MyMouseEvent {
+    protected intersection:Intersection;
+    protected planeIntersection:Intersection;
 
-    setIntersection(intersection:THREE.Intersection) {
+    // Установить пересечение мыши с плоскостью
+    setPlaneIntersection(planeIntersection:Intersection):MyMouseEvent {
+        this.planeIntersection = planeIntersection;
+        return this;
+    }
+
+    // Получить пересечение мыши с плоскостью
+    getPlaneIntersection():Intersection {
+        return this.planeIntersection;
+    }
+
+    setIntersection(intersection:Intersection):MyMouseEvent {
         this.intersection = intersection;
         return this;
     }
 
-    getIntersection():THREE.Intersection {
+    getIntersection():Intersection {
         return this.intersection;
     }
 }
 
 // Геометрия стены
 class WallGeometry extends THREE.BoxGeometry {
-    constructor(protected size:V3) {
-        super(size.x, size.y, size.z);
+    constructor() {
+        super(1, 1, 1);
     }
 }
 
@@ -304,5 +359,263 @@ class WallMaterial extends THREE.MeshLambertMaterial {
         super({
             color: 0xff0000
         });
+    }
+}
+
+// Плоскость, по которой будут двигаться стены
+class ClickPlane extends THREE.Mesh {
+    constructor() {
+        super(
+            new THREE.PlaneBufferGeometry(2000, 2000, 8, 8),
+            new THREE.MeshBasicMaterial({
+                // color: 0xff0000
+                visible: false
+            })
+        );
+    }
+}
+
+class Section extends Object3D {
+    public wall:Wall;
+
+    constructor(protected size:V3, position:V3, protected thickness:number) {
+        super();
+        
+        this.position.copy(position);
+        
+        this.wall = new Wall(
+            size
+                .clone()
+                .setX(thickness),
+            position
+                .clone()
+                .setX(position.x + size.x / 2)
+        );
+
+        this.add(this.wall);
+    }
+}
+
+class Sections extends Object3D {
+    protected sections:Section[] = [];
+    protected sectionSize:V3;
+
+    constructor(protected mouseEventManager:MouseEventManager,
+                protected boundSize:V3,
+                protected thickness:number,
+                protected amount = 3,
+                protected minWidth = 50) {
+        super();
+        this.sectionSize = boundSize.clone().setX(thickness);
+        this.setAmount(amount);
+    }
+
+    setAmount(amount:number) {
+        this.amount = amount;
+        this.sections = [];
+
+        let width:number = this.boundSize.x / (amount + 1),
+            x:number = (width - this.boundSize.x) / 2;
+
+        for (var i = 0; i < amount; i++) {
+            var section = new Section(
+                this.sectionSize,
+                new V3(x, 0, 0),
+                this.thickness
+            );
+            this.sections.push(section);
+            this.add(section);
+            x += width;
+        }
+
+        this.listen();
+    }
+
+    private listen() {
+        this.sections.forEach((section:Section, index:number) => {
+            let moving = false,
+                previous:Section = this.sections[index - 1],
+                next:Section = this.sections[index + 1];
+
+            this.mouseEventManager
+                .onPlane(MouseEventType.Move, (event:MyMouseEvent) => {
+                    if (!moving) return;
+
+                    var boundEdge = this.boundSize.x / 2 - this.thickness,
+                        x = event.getPlaneIntersection().point.x,
+                        max = next ? (next.wall.position.x - this.thickness) : boundEdge,
+                        min = previous ? (previous.position.x + this.thickness) : -boundEdge;
+
+                    x = Math.min(x, max - this.minWidth);
+                    x = Math.max(x, min + this.minWidth);
+
+                    // section.setWidth(x - min);
+
+                    section.position.setX(x);
+                })
+                .onPlane(MouseEventType.Up, (event:MyMouseEvent) => {
+                    moving = false;
+                })
+                .onObject(MouseEventType.Down, section.wall, () => {
+                    moving = true;
+                });
+        });
+    }
+}
+
+class Cupboard extends Object3D {
+    protected walls:Walls;
+    protected sections:Sections;
+
+    constructor(protected mouseEventManager:MouseEventManager,
+                protected size:V3 = new V3(300, 250, 60),
+                protected thickness:number = 5,
+                protected minSize:V3 = new V3(100, 100, 30),
+                protected maxSize:V3 = new V3(500, 400, 100)) {
+        super();
+        this.walls = new Walls(size, thickness);
+        this.sections = new Sections(mouseEventManager, size, thickness, Math.floor(Math.random() * 3 + 3));
+        this.add(this.walls);
+        this.add(this.sections);
+
+        this.listen();
+    }
+
+    listen() {
+        let change = new V3(),
+            initPoint:V3,
+            initSize:V3;
+
+        this.mouseEventManager
+            .onPlane(MouseEventType.Move, (event:MyMouseEvent) => {
+                var point = event.getPlaneIntersection().point;
+                for (var i = 0; i < 3; i++) {
+                    var j = i == 2 ? 0 : i,
+                        size = initSize.getComponent(i) + point.getComponent(j) - initPoint.getComponent(j);
+                    change.getComponent(i) && this.setSizeComponent(i, size);
+                }
+            })
+            .onPlane(MouseEventType.Up, (event:MyMouseEvent) => {
+                change.set(0, 0, 0);
+            })
+            .onPlane(MouseEventType.Down, (event:MyMouseEvent) => {
+                initPoint = event.getPlaneIntersection().point;
+                initSize = this.size.clone();
+            })
+            .onObject(MouseEventType.Down, this.walls.right, (event:MyMouseEvent) => {
+                change.x = 1;
+            })
+            .onObject(MouseEventType.Down, this.walls.bottom, (event:MyMouseEvent) => {
+                change.y = 1;
+            })
+            .onObject(MouseEventType.Down, this.walls.left, (event:MyMouseEvent) => {
+                change.z = 1;
+            })
+            .onObject(MouseEventType.Down, this.walls.top, (event:MyMouseEvent) => {
+                change.z = 1;
+            });
+    }
+
+    setSizeComponent(index:number, size:number):Cupboard {
+        size = Math.max(size, this.minSize.getComponent(index));
+        size = Math.min(size, this.maxSize.getComponent(index));
+        this.size.setComponent(index, size);
+        this.walls.setSizeComponent(index, size);
+        return this;
+    }
+}
+
+class Walls extends Object3D {
+    public left:Wall;
+    public right:Wall;
+    public top:Wall;
+    public bottom:Wall;
+    public back:Wall;
+
+    constructor(protected boundSize:V3, protected thickness:number) {
+        super();
+
+        this
+            .createLeftRight(boundSize, thickness)
+            .createTopBottom(boundSize, thickness)
+            .createBack(boundSize, thickness);
+    }
+
+    // Левая и правая стена
+    protected createLeftRight(boundSize:V3, thickness:number):Walls {
+        let size = boundSize.clone().setX(thickness);
+        let position = new V3((thickness - boundSize.x) / 2, 0, 0);
+        this.left = new Wall(size, position);
+
+        position.x *= -1;
+        this.right = new Wall(size, position);
+
+        this.add(this.left);
+        this.add(this.right);
+        return this;
+    }
+
+    // Верхняя и нижняя стена
+    protected createTopBottom(boundSize:V3, thickness:number):Walls {
+        let size = boundSize.clone().setY(thickness).setX(boundSize.x - thickness * 2);
+        let position = new V3(0, (boundSize.y - thickness) / 2, 0);
+        this.top = new Wall(size, position);
+        position.y *= -1;
+        this.bottom = new Wall(size, position);
+        this.add(this.top);
+        this.add(this.bottom);
+        return this;
+    }
+
+    // Задняя стена
+    protected createBack(boundSize:V3, thickness:number):Walls {
+        let size = boundSize.clone().setZ(thickness);
+        let position = new V3(0, 0, -boundSize.z / 2);
+        this.back = new Wall(size, position);
+        this.add(this.back);
+        return this;
+    }
+
+    setSizeComponent(index:number, size:number) {
+        this.boundSize.setComponent(index, size);
+
+        let half:number = size / 2,
+            resizables:Wall[] = [];
+
+        switch (index) {
+            case 0:
+                this.right.position.x = half;
+                this.left.position.x = -half;
+                resizables = [
+                    this.top,
+                    this.bottom,
+                    this.back
+                ];
+                break;
+
+            case 1:
+                this.top.position.y = half;
+                this.bottom.position.y = -half;
+                resizables = [
+                    this.left,
+                    this.right,
+                    this.back
+                ];
+                break;
+
+            case 2:
+                this.back.position.z = -half;
+                resizables = [
+                    this.left,
+                    this.right,
+                    this.top,
+                    this.bottom
+                ];
+                break;
+        }
+
+        resizables.forEach((wall:Wall) => wall.scale.setComponent(index, size));
+
+        return this;
     }
 }
