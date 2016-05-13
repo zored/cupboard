@@ -1,0 +1,5 @@
+node_modules
+assets/ts/*.js
+assets/ts/*.js.map
+web/js.js
+web/js.js.map
