@@ -309,7 +309,7 @@ class Light extends THREE.PointLight {
 
 // Стена
 class Wall extends THREE.Mesh {
-    constructor(size:V3 = new V3(), position:V3 = new V3()) {
+    constructor(size:V3 = new V3(1, 1, 1), position:V3 = new V3()) {
         super(
             new WallGeometry() as any as THREE.BufferGeometry,
             new WallMaterial()
@@ -378,7 +378,7 @@ class ClickPlane extends THREE.Mesh {
 class Section extends Object3D {
     public wall:Wall = null;
     protected size:V3 = new V3();
-    public moving:boolean = false;
+    public resizing:boolean = false;
 
     constructor(protected thickness:number, public relativeSize:number, protected direction:SectionsDirection) {
         super();
@@ -408,21 +408,10 @@ class Section extends Object3D {
         return this;
     }
 
-    setSize(size:V3) {
+    setSize(size:V3):Section {
         for (var i = 0; i < 3; i++) {
             this.setSizeComponent(i, size.getComponent(i));
         }
-        return this;
-    }
-
-    /**
-     * Установить x
-     *
-     * @param x
-     * @returns {Section}
-     */
-    setX(x:number):Section {
-        this.position.setX(x);
         return this;
     }
 
@@ -433,24 +422,91 @@ class Section extends Object3D {
     getSizeComponent(index:number) {
         return this.size.getComponent(index);
     }
+
+    setPositionComponent(index:number, position:number) {
+        this.position.setComponent(index, position);
+        return this;
+    }
 }
 
 enum SectionsDirection{
-    Horizontal,
-    Vertical
+    Horizontal = 0,
+    Vertical = 1
 }
 
-class WallSections extends Sections {
+class SectionsEvents {
+    protected sectionsEvents:SectionEvent[] = [];
 
+    constructor(protected mouseEventManager:MouseEventManager, protected sections:Sections) {
+        sections.getAll().forEach(this.getSectionEvent);
+    }
+
+    protected getSectionEvent = (section:Section) => {
+        this.sectionsEvents.push(new SectionEvent(this.mouseEventManager, section, this.sections));
+    }
+}
+
+class SectionEvent {
     constructor(
-        direction:SectionsDirection,
         mouseEventManager:MouseEventManager,
-        boundSize:THREE.Vector3,
-        thickness:number,
-        amount:number,
-        minWidth:number
-    ) {
-        super(direction, mouseEventManager, boundSize, thickness, amount, minWidth);
+        section:Section,
+        sections:Sections
+    ){
+        if (!section.wall) return;
+
+        let previous:Section = sections.getPrevious(section),
+            next:Section = sections.getNext(section);
+
+        // Когда жмем на стенку секции
+        mouseEventManager
+            .onObject(
+                MouseEventType.Down,
+                section.wall,
+                () => sections.setSectionResizing(section)
+            )
+
+            // Когда перестаем жать на стенку секции
+            .onPlane(
+                MouseEventType.Up,
+                () => sections.setSectionResizing(section, false)
+            )
+
+            // Когда двигаем мышью по плоскости
+            .onPlane(MouseEventType.Move, (event:MyMouseEvent) => {
+                if (!section.resizing) return;
+
+                let halfSize = sections.getDirectionSize() / 2, // половина размера.
+                    minEdge = previous
+                        ? previous.getWallComponent(sections.direction)
+                        : -halfSize, // откуда считать ращзмер
+                    mouseCoordinate = event.getPlaneIntersection().point.getComponent(sections.direction), // координата мыши
+                    maxCoordinate = next
+                        ? next.getWallComponent(sections.direction)
+                        : +halfSize, // максимум координаты мыши
+                    minCoordinate = minEdge, // минимум координаты мыши
+                    minSectionSize = sections.thickness + sections.minSize; // минимальный размер секции
+
+                // Добавляем минимальный размер секции к ограничениям.
+                maxCoordinate -= minSectionSize;
+                minCoordinate += minSectionSize;
+
+                // Ограничения не позволяют перемещать секцию.
+                if (minCoordinate > maxCoordinate) return;
+
+                // Ограничиваем координату мыши
+                mouseCoordinate = Math.min(mouseCoordinate, maxCoordinate);
+                mouseCoordinate = Math.max(mouseCoordinate, minCoordinate);
+
+                // Задаём размер секции и её изменение
+                let size = mouseCoordinate - minEdge,
+                    delta = size - section.getSizeComponent(this.direction);
+
+                // Устанавливаем размер секции
+                this.setSectionSizeComponent(section, size);
+
+                // Если есть следуюшая секция - изменяем её размер обратно пропорционально текущей
+                next && this.setSectionSizeComponent(next, next.getSizeComponent(this.direction) - delta);
+            });
     }
 }
 
@@ -458,17 +514,24 @@ class WallSections extends Sections {
 class Sections extends Object3D {
     protected sections:Section[] = [];
     protected sectionSize:V3;
-    public moving:boolean = false;
+    protected events:SectionsEvents;
+    public innerResizing:boolean = false;
 
-    constructor(protected direction:SectionsDirection,
+    constructor(public direction:SectionsDirection,
                 protected mouseEventManager:MouseEventManager,
-                protected boundSize:V3,
-                protected thickness:number,
+                protected size:V3,
+                public thickness:number,
                 protected amount = 3,
-                protected minSize = 20) {
+                public minSize = 20) {
         super();
-        this.sectionSize = boundSize.clone();
+
+        this.events = new SectionsEvents(mouseEventManager, this);
+        this.sectionSize = size.clone();
         this.setAmount(amount);
+    }
+
+    getAll() {
+        return this.sections;
     }
 
     setAmount(amount:number) {
@@ -476,7 +539,7 @@ class Sections extends Object3D {
 
         this.clear();
 
-        let boundSize:number = this.getBoundSize(),
+        let boundSize:number = this.getDirectionSize(),
             size:number = boundSize / amount,
             relativeSize:number = size / boundSize;
 
@@ -491,116 +554,190 @@ class Sections extends Object3D {
         // Удаляем стенку у последней секции
         this.sections[amount - 1].wall = null;
 
-        this.updatePositionsAndSizes().listen();
+        this.updatePositionsAndSizesByRelative();
     }
 
-    protected createSection(relativeSize:number){
+    protected createSection(relativeSize:number) {
         return new Section(this.thickness, relativeSize, this.direction);
     }
 
     /**
-     * 
-     * Слушать события
+     * Установить, что мы перемещаем секцию.
+     *
+     * @param section
+     * @param resizing
+     * @returns {Sections}
      */
-    protected listen() {
-        this.sections.forEach(this.listenSection);
+    setSectionResizing(section:Section, resizing:boolean = true) {
+        section.resizing = resizing;
+        this.innerResizing = resizing;
+        return this;
     }
 
     /**
-     * Установить события для секции
+     * Установить размер секции.
      *
      * @param section
-     * @param index
+     * @param size
+     * @returns {Sections}
      */
-    protected listenSection = (section:Section, index:number) => {
-        if (!section.wall) return;
-
-        let previous:Section = this.sections[index - 1],
-            next:Section = this.sections[index + 1];
-
-        this.mouseEventManager
-            .onPlane(MouseEventType.Move, (event:MyMouseEvent) => {
-                if (!section.moving) return;
-
-                let halfSize = this.getBoundSize() / 2,
-                    minEdge = previous ? previous.getWallComponent(this.direction) : -halfSize,
-                    mouseCoordinate = event.getPlaneIntersection().point.getComponent(this.direction),
-                    maxCoordinate = next ? next.getWallComponent(this.direction) : halfSize,
-                    minCoordinate = minEdge,
-                    minSize = this.thickness + this.minSize;
-
-                maxCoordinate -= minSize;
-                minCoordinate += minSize;
-
-                if (minCoordinate > maxCoordinate) return;
-
-                mouseCoordinate = Math.min(mouseCoordinate, maxCoordinate - this.minSize);
-                mouseCoordinate = Math.max(mouseCoordinate, minCoordinate + this.minSize);
-
-                let size = mouseCoordinate - minEdge,
-                    delta = section.getSizeComponent(this.direction) - size;
-
-                this.setSectionSizeComponent(section, size);
-
-                next && this.setSectionSizeComponent(next, next.getSizeComponent(this.direction) + delta);
-
-                this.updatePositionsAndSizes();
-            })
-            .onPlane(MouseEventType.Up, () => this.setSectionMoving(section, false))
-            .onObject(MouseEventType.Down, section.wall, () => this.setSectionMoving(section));
-    }
-
-    protected setSectionMoving(section:Section, moving:boolean = true) {
-        section.moving = moving;
-        this.moving = moving;
-        return this;
-    }
-
     setSectionSizeComponent(section:Section, size:number) {
         section.setSizeComponent(this.direction, size);
-        section.relativeSize = size / this.getBoundSize();
+        section.relativeSize = size / this.getDirectionSize();
         return this;
     }
 
+    /**
+     * Установить размер.
+     *
+     * @param index
+     * @param size
+     */
     setSizeComponent(index:number, size:number) {
-        this.boundSize.setComponent(index, size);
-        this.updatePositionsAndSizes();
+        this.size.setComponent(index, size);
+        this.updatePositionsAndSizesByRelative();
     }
 
-    getBoundSize(){
-        return this.boundSize.getComponent(this.direction);
+    /**
+     * Получить размер по направлению секции (горизонтальная - ширина, вертикальная - высота)
+     *
+     * @returns {number}
+     */
+    getDirectionSize() {
+        return this.size.getComponent(this.direction);
     }
 
-    updatePositionsAndSizes() {
-        var position = -this.getBoundSize() / 2;
+    /**
+     * Обновить положения и размеры секций по их относительным размерам.
+     *
+     * @returns {Sections}
+     */
+    updatePositionsAndSizesByRelative() {
+        // Координата секции (x / y)
+        let position = -this.getDirectionSize() / 2;
+
         this.sections.forEach((section:Section) => {
             // Размер секции
-            let size = this.getBoundSize() * section.relativeSize,
+            let size:number = this.getDirectionSize() * section.relativeSize,
                 half = size / 2;
 
-            // Координата секции
+            // Отодвигаем координату центра секции на половину размера.
             position += half;
 
             // Размер секции
-            let size3 = this.boundSize.clone();
+            let sectionSize = this.size.clone();
 
-            // Устанавливаем размер секции
-            size3.setComponent(this.direction, size);
+            // Устанавливаем размер секции по направлению
+            sectionSize.setComponent(this.direction, size);
 
-            // Устанавливаем размер и координату
-            section.setSize(size3).setX(position);
+            // Устанавливаем размер и положение секции
+            section
+                .setSize(sectionSize)
+                .setPositionComponent(this.direction, position);
 
             position += half;
         });
         return this;
     }
 
+    /**
+     * Очистить секции
+     *
+     * @returns {Sections}
+     */
     protected clear() {
         this.sections.forEach((section:Section) => this.remove(section));
         this.sections = [];
         return this;
     }
+
+    getPrevious(section:Section) {
+        return this.getNear(section, -1);
+    }
+
+    getNext(section:Section) {
+        return this.getNear(section, +1);
+    }
+
+    protected getNear(section:Section, deltaIndex:number){
+        for (var index in this.sections) {
+            if (section == this.sections[index]) return this.sections[index + deltaIndex];
+        }
+    }
 }
+
+
+class WallSections extends Sections {
+
+    constructor(mouseEventManager:MouseEventManager,
+                boundSize:THREE.Vector3,
+                thickness:number,
+                amount:number,
+                minWidth:number = 20) {
+        super(
+            SectionsDirection.Horizontal,
+            mouseEventManager,
+            boundSize,
+            thickness,
+            amount,
+            minWidth
+        );
+    }
+
+    protected createSection(relativeSize:number):Section {
+        var size = this.size.clone(),
+            direction = SectionsDirection.Vertical;
+
+        size.setComponent(
+            direction,
+            relativeSize * this.getDirectionSize()
+        );
+
+        console.log(size, direction);
+
+        var amount = Math.floor(Math.random() * 3) + 3;
+
+        return (new WallSection(this.thickness, relativeSize, direction)).setShelves(
+            new ShelfSections(
+                this.mouseEventManager,
+                size,
+                this.thickness,
+                amount
+            )
+        );
+    }
+}
+
+class WallSection extends Section {
+    protected shelves:ShelfSections;
+
+    constructor(thickness:number, relativeSize:number, direction:SectionsDirection) {
+        super(thickness, relativeSize, direction);
+    }
+
+    setShelves(shelves:ShelfSections) {
+        this.add(this.shelves = shelves);
+        return this;
+    }
+}
+
+class ShelfSections extends Sections {
+    constructor(mouseEventManager:MouseEventManager,
+                boundSize:THREE.Vector3,
+                thickness:number,
+                amount:number,
+                minSize:number = 20) {
+        super(
+            SectionsDirection.Vertical,
+            mouseEventManager,
+            boundSize,
+            thickness,
+            amount,
+            minSize
+        );
+    }
+}
+
 
 class Cupboard extends Object3D {
     protected walls:Walls;
@@ -616,7 +753,7 @@ class Cupboard extends Object3D {
 
         // Количество секций
         var sectionsAmount = Math.floor(Math.random() * 3 + 3);
-        this.sections = new Sections(SectionsDirection.Horizontal, mouseEventManager, size, thickness, sectionsAmount);
+        this.sections = new WallSections(mouseEventManager, size, thickness, sectionsAmount);
         this.add(this.walls);
         this.add(this.sections);
 
