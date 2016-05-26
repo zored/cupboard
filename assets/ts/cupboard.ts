@@ -62,34 +62,46 @@ class MouseRaycaster extends THREE.Raycaster {
 }
 
 // Типы событий мыши
-enum MouseEventType {
-    Down,
-    Up,
-    Move
+enum EventTypeEnum {
+    MouseDown,
+    MouseUp,
+    MouseMove
 }
 
-interface MouseEventsContainer {
-    [type:number]:MouseCallback[]
+class EventTypes{
+    protected types:EventType[];
+
+    get(name:EventTypeEnum){
+        for (let type:EventType of this.types) {
+            if (type.name == name) {
+                return type;
+            }
+        }
+    }
 }
 
-interface ObjectCallbacks {
-    callbacks:MouseCallback[],
-    object:Object3D
+class EventType {
+    public name:EventTypeEnum;
+    protected objects:ObjectWithHandlers[] = [];
 }
 
-interface MouseObjectEventsContainer {
-    [type:number]:ObjectCallbacks[]
+class ObjectWithHandlers {
+    protected object:Object3D = null;
+    protected handlers:EventHandler[] = [];
 }
 
+class EventHandler {
+    handle() {
 
-type MouseCallback = (event:MyMouseEvent) => void;
+    }
+}
+
 
 class MouseEventManager {
     protected objects:Object3D[] = [];
     protected raycaster:MouseRaycaster;
-    protected plane:ClickPlane;
-    protected objectsEvents:MouseObjectEventsContainer = {};
-    protected planeEvents:MouseEventsContainer = {};
+    public plane:ClickPlane;
+    protected eventTypes:EventTypes;
 
     constructor(protected canvas:Canvas, scene:Scene, protected camera:Camera) {
         this.raycaster = new MouseRaycaster(camera);
@@ -100,9 +112,9 @@ class MouseEventManager {
     startListen() {
         this.canvas
             .getJQuery()
-            .mousedown((event:JQueryMouseEventObject) => this.trigger(event, MouseEventType.Down))
-            .mousemove((event:JQueryMouseEventObject) => this.trigger(event, MouseEventType.Move))
-            .mouseup((event:JQueryMouseEventObject) => this.trigger(event, MouseEventType.Up));
+            .mousedown((event:JQueryMouseEventObject) => this.trigger(event, EventTypeEnum.MouseDown))
+            .mousemove((event:JQueryMouseEventObject) => this.trigger(event, EventTypeEnum.MouseMove))
+            .mouseup((event:JQueryMouseEventObject) => this.trigger(event, EventTypeEnum.MouseUp));
         return this;
     }
 
@@ -112,9 +124,9 @@ class MouseEventManager {
     }
 
     // Событие при перемещении мыши
-    protected trigger(jqEvent:JQueryMouseEventObject, type:MouseEventType) {
+    protected trigger(jqEvent:JQueryMouseEventObject, type:EventTypeEnum) {
         // Получаем положение мыши
-        var mouse = new V2(jqEvent.offsetX, jqEvent.offsetY);
+        let mouse = new V2(jqEvent.offsetX, jqEvent.offsetY);
 
         // Получаем относительное положение мыши на канвасе
         let position = this.canvas.getRelativePoint(mouse);
@@ -145,46 +157,44 @@ class MouseEventManager {
             event.setIntersection(intersection);
 
             // Отправляем событие объекту
-            this.getObjectCallbacks(type, object).forEach((callback:MouseCallback) => callback(event));
+            this.eventTypes.get(type);
         });
     }
 
     // Получить колбэки
-    getObjectCallbacks(type:MouseEventType, object:Object3D):MouseCallback[] {
-        if (!this.objectsEvents[type]) return [];
+    getObjectCallbacks(type:EventTypeEnum, object:Object3D):MouseCallback[] {
+        if (!this.objectListeners[type]) return [];
 
-        let objectCallbacks = this.objectsEvents[type].filter(
+        let objectCallbacks = this.objectListeners[type].filter(
             (objectCallbacks:ObjectCallbacks) => (objectCallbacks.object == object)
         )[0];
 
         return objectCallbacks ? objectCallbacks.callbacks : [];
     }
 
-    getPlaneCallbacks(type:MouseEventType):MouseCallback[] {
-        return this.planeEvents[type] || [];
+    getPlaneCallbacks(type:EventTypeEnum):MouseCallback[] {
+        return this.planeEvents.get(type).getCallbacks();
     }
 
     // Добавить событие на плоскость
-    onPlane(type:MouseEventType, callback:MouseCallback):MouseEventManager {
-        if (!this.planeEvents[type]) this.planeEvents[type] = [];
-        this.planeEvents[type].push(callback);
+    onPlane(type:EventTypeEnum, callback:MouseCallback):MouseEventManager {
+        this.planeEvents.get(type).addCallback(callback);
         return this;
     }
 
     // Добавить событие на объект
-    onObject(type:MouseEventType, object:Object3D, callback:MouseCallback):MouseEventManager {
-        if (!this.objectsEvents[type]) this.objectsEvents[type] = [];
+    onObject(type:EventTypeEnum, object:Object3D, callback:MouseCallback):MouseEventManager {
+        if (!this.objectListeners[type]) this.objectListeners[type] = [];
 
-        let objectCallbacks = this.objectsEvents[type].filter(
-            (objectCallbacks:ObjectCallbacks) => (objectCallbacks.object == object)
-        )[0];
+        let objectCallbacks = this.getObjectCallbacksByTypeAndObject(type, object),
+            hasListener = this.objects.some((object_:Object3D) => object_ == object);
 
-        var hasListener = this.objects.some((object_:Object3D) => object_ == object);
-
-        if (!hasListener) this.objects.push(object);
+        if (!hasListener) {
+            this.objects.push(object);
+        }
 
         if (!objectCallbacks) {
-            this.objectsEvents[type].push({
+            this.objectListeners[type].push({
                 object: object,
                 callbacks: [callback]
             });
@@ -193,6 +203,29 @@ class MouseEventManager {
 
         objectCallbacks.callbacks.push(callback);
         return this;
+    }
+
+    offObject(type:EventTypeEnum, object:Object3D, callback:MyMouseEvent) {
+        let objectCallbacks = this.getObjectCallbacksByTypeAndObject(type, object);
+        return this;
+    }
+
+    protected getObjectCallbacksByTypeAndObject(type:EventTypeEnum, object:Object3D) {
+        let objectCallbacksContainer = this.objectListeners[type];
+        if (!objectCallbacksContainer) {
+            return null;
+        }
+
+        let objectCallbacks = objectCallbacksContainer.filter(this.sameWith(object));
+        if (!objectCallbacks) {
+            return null;
+        }
+
+        return objectCallbacks[0];
+    }
+
+    protected sameWith(object:Object3D) {
+        return (objectCallbacks:ObjectCallbacks) => object == objectCallbacks.object;
     }
 }
 
@@ -434,79 +467,109 @@ enum SectionsDirection{
     Vertical = 1
 }
 
+/**
+ * События секций
+ */
 class SectionsEvents {
     protected sectionsEvents:SectionEvent[] = [];
 
     constructor(protected mouseEventManager:MouseEventManager, protected sections:Sections) {
-        sections.getAll().forEach(this.getSectionEvent);
+        sections.getAll().forEach(this.addSectionEvent);
     }
 
-    protected getSectionEvent = (section:Section) => {
-        this.sectionsEvents.push(new SectionEvent(this.mouseEventManager, section, this.sections));
+    protected addSectionEvent = (section:Section) => {
+        let sectionEvent = new SectionEvent(this.mouseEventManager, section, this.sections);
+        this.sectionsEvents.push(sectionEvent);
+    }
+
+    update() {
+        this.clear()
+    }
+
+    protected clear() {
+        this.sectionsEvents.forEach(this.clearSectionEvent);
+    }
+
+    protected clearSectionEvent = (event:SectionEvent) => {
+        event.clear();
     }
 }
 
 class SectionEvent {
-    constructor(
-        mouseEventManager:MouseEventManager,
-        section:Section,
-        sections:Sections
-    ){
+    protected onWallDown:() => Sections;
+    protected onPlaneUp:() => Sections;
+    protected onPlaneMove:(event:MyMouseEvent) => ();
+
+    constructor(protected mouseEventManager:MouseEventManager,
+                protected section:Section,
+                sections:Sections) {
+
         if (!section.wall) return;
 
         let previous:Section = sections.getPrevious(section),
             next:Section = sections.getNext(section);
 
-        // Когда жмем на стенку секции
         mouseEventManager
+
+        // Когда жмем на стенку секции
             .onObject(
-                MouseEventType.Down,
+                EventTypeEnum.MouseDown,
                 section.wall,
-                () => sections.setSectionResizing(section)
+                this.onWallDown = () => sections.setSectionResizing(section)
             )
 
             // Когда перестаем жать на стенку секции
             .onPlane(
-                MouseEventType.Up,
-                () => sections.setSectionResizing(section, false)
+                EventTypeEnum.MouseUp,
+                this.onPlaneUp = () => sections.setSectionResizing(section, false)
             )
 
             // Когда двигаем мышью по плоскости
-            .onPlane(MouseEventType.Move, (event:MyMouseEvent) => {
-                if (!section.resizing) return;
+            .onPlane(
+                EventTypeEnum.MouseMove,
+                this.onPlaneMove = (event:MyMouseEvent) => {
+                    if (!section.resizing) return;
 
-                let halfSize = sections.getDirectionSize() / 2, // половина размера.
-                    minEdge = previous
-                        ? previous.getWallComponent(sections.direction)
-                        : -halfSize, // откуда считать ращзмер
-                    mouseCoordinate = event.getPlaneIntersection().point.getComponent(sections.direction), // координата мыши
-                    maxCoordinate = next
-                        ? next.getWallComponent(sections.direction)
-                        : +halfSize, // максимум координаты мыши
-                    minCoordinate = minEdge, // минимум координаты мыши
-                    minSectionSize = sections.thickness + sections.minSize; // минимальный размер секции
+                    let halfSize = sections.getDirectionSize() / 2, // половина размера.
+                        minEdge = previous
+                            ? previous.getWallComponent(sections.direction)
+                            : -halfSize, // откуда считать ращзмер
+                        mouseCoordinate = event.getPlaneIntersection().point.getComponent(sections.direction), // координата мыши
+                        maxCoordinate = next
+                            ? next.getWallComponent(sections.direction)
+                            : +halfSize, // максимум координаты мыши
+                        minCoordinate = minEdge, // минимум координаты мыши
+                        minSectionSize = sections.thickness + sections.minSize; // минимальный размер секции
 
-                // Добавляем минимальный размер секции к ограничениям.
-                maxCoordinate -= minSectionSize;
-                minCoordinate += minSectionSize;
+                    // Добавляем минимальный размер секции к ограничениям.
+                    maxCoordinate -= minSectionSize;
+                    minCoordinate += minSectionSize;
 
-                // Ограничения не позволяют перемещать секцию.
-                if (minCoordinate > maxCoordinate) return;
+                    // Ограничения не позволяют перемещать секцию.
+                    if (minCoordinate > maxCoordinate) return;
 
-                // Ограничиваем координату мыши
-                mouseCoordinate = Math.min(mouseCoordinate, maxCoordinate);
-                mouseCoordinate = Math.max(mouseCoordinate, minCoordinate);
+                    // Ограничиваем координату мыши
+                    mouseCoordinate = Math.min(mouseCoordinate, maxCoordinate);
+                    mouseCoordinate = Math.max(mouseCoordinate, minCoordinate);
 
-                // Задаём размер секции и её изменение
-                let size = mouseCoordinate - minEdge,
-                    delta = size - section.getSizeComponent(this.direction);
+                    // Задаём размер секции и её изменение
+                    let size = mouseCoordinate - minEdge,
+                        delta = size - section.getSizeComponent(sections.direction);
 
-                // Устанавливаем размер секции
-                this.setSectionSizeComponent(section, size);
+                    // Устанавливаем размер секции
+                    sections.setSectionSizeComponent(section, size);
 
-                // Если есть следуюшая секция - изменяем её размер обратно пропорционально текущей
-                next && this.setSectionSizeComponent(next, next.getSizeComponent(this.direction) - delta);
-            });
+                    // Если есть следуюшая секция - изменяем её размер обратно пропорционально текущей
+                    next && sections.setSectionSizeComponent(next, next.getSizeComponent(sections.direction) - delta);
+                }
+            );
+    }
+
+    clear() {
+        this.mouseEventManager
+            .offObject(EventTypeEnum.MouseDown, this.section.wall, this.onWallDown)
+            .offPlane(EventTypeEnum.MouseUp, this.onPlaneUp)
+            .offPlane(EventTypeEnum.MouseMove, this.onPlaneMove);
     }
 }
 
@@ -553,6 +616,8 @@ class Sections extends Object3D {
 
         // Удаляем стенку у последней секции
         this.sections[amount - 1].wall = null;
+
+        this.events.update();
 
         this.updatePositionsAndSizesByRelative();
     }
@@ -659,10 +724,15 @@ class Sections extends Object3D {
         return this.getNear(section, +1);
     }
 
-    protected getNear(section:Section, deltaIndex:number){
-        for (var index in this.sections) {
-            if (section == this.sections[index]) return this.sections[index + deltaIndex];
+    protected getNear(section:Section, deltaIndex:number):Section {
+        for (let index in this.sections) {
+            if (section == this.sections[index]) {
+                let nearIndex:number = parseInt(index) + deltaIndex;
+                return this.sections[nearIndex];
+            }
         }
+
+        return null;
     }
 }
 
@@ -766,7 +836,7 @@ class Cupboard extends Object3D {
             initSize:V3;
 
         this.mouseEventManager
-            .onPlane(MouseEventType.Move, (event:MyMouseEvent) => {
+            .onPlane(EventTypeEnum.MouseMove, (event:MyMouseEvent) => {
                 if (!initPoint) return;
 
                 let point = event.getPlaneIntersection().point;
@@ -777,23 +847,23 @@ class Cupboard extends Object3D {
                     change.getComponent(i) && this.setSizeComponent(i, size);
                 }
             })
-            .onPlane(MouseEventType.Up, () => {
+            .onPlane(EventTypeEnum.MouseUp, () => {
                 change.set(0, 0, 0);
             })
-            .onPlane(MouseEventType.Down, (event:MyMouseEvent) => {
+            .onPlane(EventTypeEnum.MouseDown, (event:MyMouseEvent) => {
                 initPoint = event.getPlaneIntersection().point;
                 initSize = this.size.clone();
             })
-            .onObject(MouseEventType.Down, this.walls.right, () => {
+            .onObject(EventTypeEnum.MouseDown, this.walls.right, () => {
                 change.x = 1;
             })
-            .onObject(MouseEventType.Down, this.walls.bottom, () => {
+            .onObject(EventTypeEnum.MouseDown, this.walls.bottom, () => {
                 change.y = 1;
             })
-            .onObject(MouseEventType.Down, this.walls.left, () => {
+            .onObject(EventTypeEnum.MouseDown, this.walls.left, () => {
                 change.z = 1;
             })
-            .onObject(MouseEventType.Down, this.walls.top, () => {
+            .onObject(EventTypeEnum.MouseDown, this.walls.top, () => {
                 change.z = 1;
             });
     }
