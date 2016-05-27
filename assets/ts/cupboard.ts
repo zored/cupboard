@@ -13,19 +13,23 @@ export class World {
     protected scene:Scene;
     protected camera:Camera;
     protected active:boolean = true;
-    protected mouseEventManager:MouseEventManager;
+    protected eventManager:EventManager;
 
     constructor(protected canvas:Canvas) {
         this.scene = new Scene();
         this.renderer = new Renderer(canvas);
         this.camera = new Camera(canvas);
-        this.mouseEventManager = new MouseEventManager(this.canvas, this.scene, this.camera);
+        this.eventManager = new EventManager();
+        this.eventManager.mouse = new MouseEventPasser(canvas, this.scene, this.camera, this.eventManager);
+        this.eventManager.keyboard = new KeyboardEventPasser(canvas.$window, this.eventManager);
 
-        // Слушаем действия мыши
-        this.mouseEventManager.startListen();
+        [
+            this.eventManager.mouse,
+            this.eventManager.keyboard
+        ].forEach((passer:EventPasser) => passer.listen());
 
         // Заполняем сцену объектами
-        this.scene.fill(this.mouseEventManager);
+        this.scene.fill(this.eventManager);
     }
 
     // Каждый фрейм запускать рендер
@@ -63,68 +67,281 @@ class MouseRaycaster extends THREE.Raycaster {
 
 // Типы событий мыши
 enum EventTypeEnum {
-    MouseDown,
-    MouseUp,
-    MouseMove
+    MouseDown = 0,
+    MouseUp = 1,
+    MouseMove = 2,
+    KeyDown = 3,
+    KeyUp = 4,
+    MouseUpGlobal = 5,
 }
 
-class EventTypes{
-    protected types:EventType[];
+/**
+ * Типы события
+ */
+class EventTypes {
+    protected types:EventType[] = [];
 
-    get(name:EventTypeEnum){
-        for (let type:EventType of this.types) {
+    /**
+     * Получить тип события по названию.
+     *
+     * @param name
+     * @returns {EventType}
+     */
+    get(name:EventTypeEnum):EventType {
+        for (let type of this.types) {
             if (type.name == name) {
                 return type;
             }
         }
+        return null;
+    }
+
+    /**
+     * Добавить тип события
+     *
+     * @param eventType
+     * @returns {EventTypes}
+     */
+    add(eventType:EventType) {
+        this.types.push(eventType);
+
+        return this;
+    }
+
+    /**
+     * Выполнить все обработчики слушателя, связанные с указанным типом события и
+     *
+     * @param type
+     * @param object
+     * @param data
+     * @returns {EventTypes}
+     */
+    trigger(type:EventTypeEnum, object:Object3D, data:EventData = null) {
+        // Получаем слушателя:
+        let listener:Listener = this.getListener(type, object, false);
+
+        // Если слушателя нет, выходим:
+        if (!listener) {
+            return this;
+        }
+
+        // Вызываем обработчики с данными:
+        listener.trigger(data);
+
+        return this;
+    }
+
+    /**
+     * Получить слушателя, связанного с данным типом события и объектом.
+     *
+     * @param type
+     * @param object
+     * @param createIfNotFound Создать тип события и слушателя, если их нет.
+     * @returns {Listener}
+     */
+    protected getListener(type:EventTypeEnum, object:Object3D = null, createIfNotFound:boolean):Listener {
+        let eventType:EventType = this.get(type);
+        if (!eventType) {
+            if (!createIfNotFound) {
+                return null;
+            }
+            eventType = new EventType(type);
+            this.add(eventType);
+        }
+
+        let listener:Listener = eventType.getListener(object);
+        if (!listener) {
+            if (!createIfNotFound) {
+                return null;
+            }
+            listener = new Listener(object);
+            eventType.addListener(listener);
+        }
+
+        return listener;
+    }
+
+    /**
+     * Добавить обработчик события на объекте.
+     *
+     * @param type
+     * @param object
+     * @param handler
+     * @returns {EventTypes}
+     */
+    on(type:EventTypeEnum, object:Object3D, handler:EventHandler) {
+        // Получаем слушателя (или создаём его) и удаляем его обработчик:
+        this.getListener(type, object, true).addHandler(handler);
+        console.log(this);
+        return this;
+    }
+
+    /**
+     * Убрать обработчик события с объекта.
+     *
+     * @param type
+     * @param object
+     * @param handler
+     * @returns {EventTypes}
+     */
+    off(type:EventTypeEnum, object:Object3D, handler:EventHandler) {
+        // Получаем слушателя события:
+        let listener = this.getListener(type, object, false);
+
+        // Слушателя нет - выходим:
+        if (!listener) {
+            return this;
+        }
+
+        // Удаляем у слушателя обработчик:
+        listener.removeHandler(handler);
+        return this;
+    }
+
+    getObjects(type:EventTypeEnum):Object3D[] {
+        return this.get(type).getObjects();
     }
 }
 
 class EventType {
-    public name:EventTypeEnum;
-    protected objects:ObjectWithHandlers[] = [];
-}
+    protected listeners:Listener[] = [];
 
-class ObjectWithHandlers {
-    protected object:Object3D = null;
-    protected handlers:EventHandler[] = [];
-}
+    constructor(public name:EventTypeEnum) {
+    }
 
-class EventHandler {
-    handle() {
+    getListener(object:Object3D):Listener {
+        for (let listener of this.listeners) {
+            if (listener.object == object) {
+                return listener;
+            }
+        }
+        return null;
+    }
 
+    getObjects() {
+        let objects:Object3D[] = [];
+        for (let listener of this.listeners) {
+            objects.push(listener.object);
+        }
+        return objects;
+    }
+
+    addListener(listener:Listener) {
+        this.listeners.push(listener);
+        return this;
     }
 }
 
+class Listener {
+    protected handlers:EventHandler[] = [];
 
-class MouseEventManager {
-    protected objects:Object3D[] = [];
+
+    constructor(public object:Object3D = null) {
+    }
+
+    trigger(data:EventData) {
+        for (let handler of this.handlers) {
+            handler.handle(data);
+        }
+        return this;
+    }
+
+    addHandler(handler:EventHandler) {
+        this.handlers.push(handler);
+        return this;
+    }
+
+    removeHandler(handler:EventHandler) {
+        let index = this.handlers.indexOf(handler);
+        if (index == -1) {
+            return this;
+        }
+
+        this.handlers.splice(index, 1);
+        return this;
+    }
+}
+
+abstract class EventPasser {
+    constructor(protected eventManager:EventManager) {
+        
+    }
+
+    abstract listen():void;
+}
+
+class KeyboardEventPasser extends EventPasser {
+    constructor(protected $window:JQuery, eventManager:EventManager) {
+        super(eventManager);
+    }
+
+    listen() {
+        this.$window
+            .keydown(this.passToTrigger(EventTypeEnum.KeyDown))
+            .keyup(this.passToTrigger(EventTypeEnum.KeyUp))
+    }
+
+    protected passToTrigger(type:EventTypeEnum) {
+        return (event:JQueryKeyEventObject) => this.trigger(event, type);
+    }
+
+    private trigger(event:JQueryKeyEventObject, type:EventTypeEnum) {
+        let data = new KeyBoardEventData();
+        data.code = event.keyCode;
+        this.eventManager.trigger(type, data);
+    }
+}
+
+class MouseEventPasser extends EventPasser {
     protected raycaster:MouseRaycaster;
-    public plane:ClickPlane;
-    protected eventTypes:EventTypes;
+    public plane:BigPlane;
 
-    constructor(protected canvas:Canvas, scene:Scene, protected camera:Camera) {
+    constructor(protected canvas:Canvas, scene:Scene, protected camera:Camera, eventManager:EventManager) {
+        super(eventManager);
         this.raycaster = new MouseRaycaster(camera);
         this.plane = scene.getClickPlane();
     }
 
-    // Устанавливаем слушателей на события мыши
-    startListen() {
-        this.canvas
-            .getJQuery()
-            .mousedown((event:JQueryMouseEventObject) => this.trigger(event, EventTypeEnum.MouseDown))
-            .mousemove((event:JQueryMouseEventObject) => this.trigger(event, EventTypeEnum.MouseMove))
-            .mouseup((event:JQueryMouseEventObject) => this.trigger(event, EventTypeEnum.MouseUp));
-        return this;
+    /**
+     * Начинаем слушать события мыши и после каждого выполням наши обработчики.
+     */
+    listen() {
+        this.canvas.getJQuery()
+            .mousedown(this.passToTrigger(EventTypeEnum.MouseDown))
+            .mousemove(this.passToTrigger(EventTypeEnum.MouseMove))
+            .mouseup(this.passToTrigger(EventTypeEnum.MouseUp));
+
+        this.canvas.$window
+            .mouseup(this.passToTrigger(EventTypeEnum.MouseUpGlobal))
     }
 
-    // Получить первое пересечение луча с объектом:
-    protected intersect(object:Object3D):Intersection {
+    /**
+     * Позволяет пробросить событие из jQuery в наш trigger.
+     *
+     * @param type
+     * @returns {function(JQueryMouseEventObject): void}
+     */
+    protected passToTrigger(type:EventTypeEnum) {
+        return (event:JQueryMouseEventObject) => this.trigger(event, type);
+    }
+
+    /**
+     * Получить первое пересечение луча мыши с объектом:
+     *
+     * @param object
+     * @returns {Intersection}
+     */
+    intersectMouseRay(object:Object3D):Intersection {
         return this.raycaster.intersectObject(object)[0];
     }
 
-    // Событие при перемещении мыши
-    protected trigger(jqEvent:JQueryMouseEventObject, type:EventTypeEnum) {
+    /**
+     * Вызвать событие в EventManager
+     *
+     * @param jqEvent
+     * @param type
+     */
+    protected trigger(jqEvent:JQueryMouseEventObject, type:EventTypeEnum):void {
         // Получаем положение мыши
         let mouse = new V2(jqEvent.offsetX, jqEvent.offsetY);
 
@@ -135,97 +352,114 @@ class MouseEventManager {
         this.raycaster.setPosition(position);
 
         // Событие
-        let event = new MyMouseEvent();
+        let data = new MouseEventData();
 
         // Установить пересечение с плоскостью
-        event.setPlaneIntersection(this.intersect(this.plane));
+        data.setPlaneIntersection(this.intersectMouseRay(this.plane));
 
         // Вызываем события
-        this.getPlaneCallbacks(type).forEach((callback:MouseCallback) => callback(event));
+        this.eventManager
+            .trigger(type, data, this.plane)
+            .trigger(type, data, null)
+            .triggerAll(type, data, new MouseObjectEventDataModifier(this));
+    }
+}
 
-        // Для каждого объекта на сцене выполняем проверку
-        this.objects.forEach((object:Object3D) => {
-            // Получаем пересечение луча с объектом
-            let intersection = this.intersect(object);
+abstract class ObjectEventDataModifier {
+    abstract modify(data:EventData, object:Object3D):EventData;
+}
 
-            // Пересечения нет
-            if (!intersection || !intersection.point) {
-                return;
+class MouseObjectEventDataModifier extends ObjectEventDataModifier {
+    constructor(protected mouseEvents:MouseEventPasser) {
+        super();
+    }
+
+    modify(data:MouseEventData, object:Object3D) {
+        if (!object) {
+            data.skip = true;
+            return data;
+        }
+
+        // Получаем пересечение
+        let intersection = this.mouseEvents.intersectMouseRay(object);
+
+        // Пересечение есть, устанавливаем его
+        if (intersection && intersection.point) {
+            data.setIntersection(intersection);
+        }
+        else{
+            data.skip = true;
+        }
+
+        return data;
+    }
+}
+
+
+class EventManager {
+    protected eventTypes:EventTypes = new EventTypes;
+    public mouse:MouseEventPasser;
+    public keyboard:KeyboardEventPasser;
+
+    /**
+     * Добавить обработчик события на объект.
+     *
+     * @param type
+     * @param object
+     * @param handler
+     * @returns {EventManager}
+     */
+    on(type:EventTypeEnum, object:Object3D, handler:EventHandler) {
+        this.eventTypes.on(type, object, handler);
+        return this;
+    }
+
+    /**
+     * Убрать обработчик события с объекта.
+     *
+     * @param type
+     * @param object
+     * @param handler
+     * @returns {EventManager}
+     */
+    off(type:EventTypeEnum, object:Object3D, handler:EventHandler) {
+        this.eventTypes.off(type, object, handler);
+        return this;
+    }
+
+    /**
+     * Добавить / удалить обработчик события с объекта.
+     *
+     * @param type
+     * @param object
+     * @param handler
+     * @param add
+     * @returns {EventManager}
+     */
+    toggle(type:EventTypeEnum, object:Object3D, handler:EventHandler, add:boolean) {
+        add
+            ? this.on(type, object, handler)
+            : this.off(type, object, handler);
+        
+        return this;
+    }
+
+    trigger(type:EventTypeEnum, data:EventData, object:Object3D = null) {
+        this.eventTypes.trigger(type, object, data);
+        return this;
+    }
+
+    triggerAll(type:EventTypeEnum, data:EventData, objectDataModifier:ObjectEventDataModifier = null) {
+        for (let object of this.eventTypes.getObjects(type)) {
+            objectDataModifier.modify(data, object);
+            if (data.skip){
+                data.skip = false;
+                continue;
             }
+            this.eventTypes.trigger(type, object, data);
+        }
 
-            // Устанавливаем пересечение для события
-            event.setIntersection(intersection);
-
-            // Отправляем событие объекту
-            this.eventTypes.get(type);
-        });
-    }
-
-    // Получить колбэки
-    getObjectCallbacks(type:EventTypeEnum, object:Object3D):MouseCallback[] {
-        if (!this.objectListeners[type]) return [];
-
-        let objectCallbacks = this.objectListeners[type].filter(
-            (objectCallbacks:ObjectCallbacks) => (objectCallbacks.object == object)
-        )[0];
-
-        return objectCallbacks ? objectCallbacks.callbacks : [];
-    }
-
-    getPlaneCallbacks(type:EventTypeEnum):MouseCallback[] {
-        return this.planeEvents.get(type).getCallbacks();
-    }
-
-    // Добавить событие на плоскость
-    onPlane(type:EventTypeEnum, callback:MouseCallback):MouseEventManager {
-        this.planeEvents.get(type).addCallback(callback);
         return this;
-    }
-
-    // Добавить событие на объект
-    onObject(type:EventTypeEnum, object:Object3D, callback:MouseCallback):MouseEventManager {
-        if (!this.objectListeners[type]) this.objectListeners[type] = [];
-
-        let objectCallbacks = this.getObjectCallbacksByTypeAndObject(type, object),
-            hasListener = this.objects.some((object_:Object3D) => object_ == object);
-
-        if (!hasListener) {
-            this.objects.push(object);
-        }
-
-        if (!objectCallbacks) {
-            this.objectListeners[type].push({
-                object: object,
-                callbacks: [callback]
-            });
-            return this;
-        }
-
-        objectCallbacks.callbacks.push(callback);
-        return this;
-    }
-
-    offObject(type:EventTypeEnum, object:Object3D, callback:MyMouseEvent) {
-        let objectCallbacks = this.getObjectCallbacksByTypeAndObject(type, object);
-        return this;
-    }
-
-    protected getObjectCallbacksByTypeAndObject(type:EventTypeEnum, object:Object3D) {
-        let objectCallbacksContainer = this.objectListeners[type];
-        if (!objectCallbacksContainer) {
-            return null;
-        }
-
-        let objectCallbacks = objectCallbacksContainer.filter(this.sameWith(object));
-        if (!objectCallbacks) {
-            return null;
-        }
-
-        return objectCallbacks[0];
-    }
-
-    protected sameWith(object:Object3D) {
-        return (objectCallbacks:ObjectCallbacks) => object == objectCallbacks.object;
     }
 }
 
@@ -233,7 +467,7 @@ class MouseEventManager {
 export class Canvas {
     protected size:V2;
 
-    constructor(width:number, height:number, protected $canvas:JQuery) {
+    constructor(width:number, height:number, protected $canvas:JQuery, public $window:JQuery) {
         this.size = new V2(width, height);
     }
 
@@ -304,17 +538,33 @@ class Renderer extends THREE.WebGLRenderer {
 
 // Сцена
 class Scene extends THREE.Scene {
-    protected clickPlane:ClickPlane;
+    protected clickPlane:BigPlane;
 
     constructor() {
         super();
-        this.clickPlane = new ClickPlane();
+        this.clickPlane = new BigPlane();
         this.add(this.clickPlane);
     }
 
     // Заполнить сцену объектами
-    fill(mouseEventManager:MouseEventManager) {
-        this.adds(new Cupboard(mouseEventManager), new Light());
+    fill(eventManager:EventManager) {
+        let cupboard = new Cupboard();
+        this.adds(cupboard, new Light());
+
+        // Добавляем события:
+        let listeners:ObjectListener[] = [
+            new CupboardListener(cupboard, eventManager),
+            new SectionsListener(cupboard.sections, eventManager),
+        ].concat();
+
+        // Получаем секции полок:
+        listeners = listeners.concat(
+            cupboard.sections
+                .getShelfSections()
+                .map((sections:ShelfSections) => new SectionsListener(sections, eventManager))
+        );
+
+        listeners.forEach((events:ObjectListener) => events.listen(true));
     }
 
     // Добавить все объекты
@@ -326,7 +576,7 @@ class Scene extends THREE.Scene {
     }
 
     // Получить плоскость для клика
-    getClickPlane():ClickPlane {
+    getClickPlane():BigPlane {
         return this.clickPlane;
     }
 }
@@ -353,13 +603,17 @@ class Wall extends THREE.Mesh {
     }
 }
 
+class EventData {
+    public skip:boolean = false;
+}
+
 // Событие при нажатии мыши>
-class MyMouseEvent {
+class MouseEventData extends EventData {
     protected intersection:Intersection;
     protected planeIntersection:Intersection;
 
     // Установить пересечение мыши с плоскостью
-    setPlaneIntersection(planeIntersection:Intersection):MyMouseEvent {
+    setPlaneIntersection(planeIntersection:Intersection):MouseEventData {
         this.planeIntersection = planeIntersection;
         return this;
     }
@@ -369,7 +623,7 @@ class MyMouseEvent {
         return this.planeIntersection;
     }
 
-    setIntersection(intersection:Intersection):MyMouseEvent {
+    setIntersection(intersection:Intersection):MouseEventData {
         this.intersection = intersection;
         return this;
     }
@@ -377,6 +631,17 @@ class MyMouseEvent {
     getIntersection():Intersection {
         return this.intersection;
     }
+}
+
+enum KeyCodeEnum {
+    LEFT = 37,
+    UP = 38,
+    RIGHT = 39,
+    DOWN = 40
+}
+
+class KeyBoardEventData extends EventData {
+    public code:KeyCodeEnum;
 }
 
 // Геометрия стены
@@ -396,7 +661,7 @@ class WallMaterial extends THREE.MeshLambertMaterial {
 }
 
 // Плоскость, по которой будут двигаться стены
-class ClickPlane extends THREE.Mesh {
+class BigPlane extends THREE.Mesh {
     constructor() {
         super(
             new THREE.PlaneBufferGeometry(2000, 2000, 8, 8),
@@ -467,109 +732,140 @@ enum SectionsDirection{
     Vertical = 1
 }
 
+abstract class ObjectListener {
+    abstract listen(add:boolean):void;
+}
+
 /**
  * События секций
  */
-class SectionsEvents {
-    protected sectionsEvents:SectionEvent[] = [];
+class SectionsListener extends ObjectListener {
+    protected sectionsEvents:SectionListener[] = [];
 
-    constructor(protected mouseEventManager:MouseEventManager, protected sections:Sections) {
-        sections.getAll().forEach(this.addSectionEvent);
+    constructor(protected sections:Sections, protected eventManager:EventManager) {
+        super();
+        this.setSections(sections);
+    }
+
+    /**
+     * Установить секции
+     *
+     * @param sections
+     */
+    setSections(sections:Sections) {
+        this.listen(false);
+        this.sections = sections;
+        this.sections.getAll().forEach(this.addSectionEvent);
     }
 
     protected addSectionEvent = (section:Section) => {
-        let sectionEvent = new SectionEvent(this.mouseEventManager, section, this.sections);
+        // Создаём событие для секции:
+        let sectionEvent = new SectionListener(this.eventManager, section, this.sections);
+
+        // Добавляем его в массив:
         this.sectionsEvents.push(sectionEvent);
-    }
+    };
 
-    update() {
-        this.clear()
-    }
-
-    protected clear() {
-        this.sectionsEvents.forEach(this.clearSectionEvent);
-    }
-
-    protected clearSectionEvent = (event:SectionEvent) => {
-        event.clear();
+    listen(add:boolean = true):void {
+        this.sectionsEvents.forEach((event:SectionListener) => event.listen(add));
     }
 }
 
-class SectionEvent {
-    protected onWallDown:() => Sections;
-    protected onPlaneUp:() => Sections;
-    protected onPlaneMove:(event:MyMouseEvent) => ();
+abstract class EventHandler {
+    abstract handle(data:EventData):void;
+}
 
-    constructor(protected mouseEventManager:MouseEventManager,
-                protected section:Section,
-                sections:Sections) {
-
-        if (!section.wall) return;
-
-        let previous:Section = sections.getPrevious(section),
-            next:Section = sections.getNext(section);
-
-        mouseEventManager
-
-        // Когда жмем на стенку секции
-            .onObject(
-                EventTypeEnum.MouseDown,
-                section.wall,
-                this.onWallDown = () => sections.setSectionResizing(section)
-            )
-
-            // Когда перестаем жать на стенку секции
-            .onPlane(
-                EventTypeEnum.MouseUp,
-                this.onPlaneUp = () => sections.setSectionResizing(section, false)
-            )
-
-            // Когда двигаем мышью по плоскости
-            .onPlane(
-                EventTypeEnum.MouseMove,
-                this.onPlaneMove = (event:MyMouseEvent) => {
-                    if (!section.resizing) return;
-
-                    let halfSize = sections.getDirectionSize() / 2, // половина размера.
-                        minEdge = previous
-                            ? previous.getWallComponent(sections.direction)
-                            : -halfSize, // откуда считать ращзмер
-                        mouseCoordinate = event.getPlaneIntersection().point.getComponent(sections.direction), // координата мыши
-                        maxCoordinate = next
-                            ? next.getWallComponent(sections.direction)
-                            : +halfSize, // максимум координаты мыши
-                        minCoordinate = minEdge, // минимум координаты мыши
-                        minSectionSize = sections.thickness + sections.minSize; // минимальный размер секции
-
-                    // Добавляем минимальный размер секции к ограничениям.
-                    maxCoordinate -= minSectionSize;
-                    minCoordinate += minSectionSize;
-
-                    // Ограничения не позволяют перемещать секцию.
-                    if (minCoordinate > maxCoordinate) return;
-
-                    // Ограничиваем координату мыши
-                    mouseCoordinate = Math.min(mouseCoordinate, maxCoordinate);
-                    mouseCoordinate = Math.max(mouseCoordinate, minCoordinate);
-
-                    // Задаём размер секции и её изменение
-                    let size = mouseCoordinate - minEdge,
-                        delta = size - section.getSizeComponent(sections.direction);
-
-                    // Устанавливаем размер секции
-                    sections.setSectionSizeComponent(section, size);
-
-                    // Если есть следуюшая секция - изменяем её размер обратно пропорционально текущей
-                    next && sections.setSectionSizeComponent(next, next.getSizeComponent(sections.direction) - delta);
-                }
-            );
+class SectionWallMouseHandler extends EventHandler {
+    constructor(protected section:Section,
+                protected sections:Sections,
+                public eventType:EventTypeEnum) {
+        super();
     }
 
-    clear() {
-        this.mouseEventManager
-            .offObject(EventTypeEnum.MouseDown, this.section.wall, this.onWallDown)
-            .offPlane(EventTypeEnum.MouseUp, this.onPlaneUp)
-            .offPlane(EventTypeEnum.MouseMove, this.onPlaneMove);
+    handle(data:EventData) {
+        let resizing = (this.eventType == EventTypeEnum.MouseDown);
+        this.sections.setSectionResizing(this.section, resizing);
+    }
+}
+
+class SectionPlaneMoveHandler extends EventHandler {
+    constructor(protected section:Section,
+                protected sections:Sections) {
+        super();
+    }
+
+    handle(data:MouseEventData) {
+        if (!this.section.resizing) return;
+
+        let direction = this.sections.direction,
+            previous:Section = this.sections.getPrevious(this.section),
+            next:Section = this.sections.getNext(this.section),
+            halfDirectionSize = this.sections.getDirectionSize() / 2,
+            mouseCoordinate = data.getPlaneIntersection().point.getComponent(direction), // координата мыши
+            minEdge = previous ? previous.getWallComponent(direction) : -halfDirectionSize, // откуда считать размер
+            maxCoordinate = next ? next.getWallComponent(direction) : +halfDirectionSize, // максимум координаты мыши
+            minCoordinate = minEdge, // минимум координаты мыши
+            minSectionSize = this.sections.thickness + this.sections.minSize; // минимальный размер секции
+
+        // Добавляем минимальный размер секции к ограничениям.
+        maxCoordinate -= minSectionSize;
+        minCoordinate += minSectionSize;
+
+        // Ограничения не позволяют перемещать секцию.
+        if (minCoordinate > maxCoordinate) return;
+
+        // Ограничиваем координату мыши
+        mouseCoordinate = Math.min(mouseCoordinate, maxCoordinate);
+        mouseCoordinate = Math.max(mouseCoordinate, minCoordinate);
+
+        // Задаём размер секции и её изменение
+        let size = mouseCoordinate - minEdge,
+            delta = size - this.section.getSizeComponent(direction);
+
+        // Устанавливаем размер секции
+        this.sections.setSectionSizeComponent(this.section, size);
+
+        // Если есть следуюшая секция - изменяем её размер обратно пропорционально текущей
+        next && this.sections.setSectionSizeComponent(next, next.getSizeComponent(direction) - delta);
+    }
+}
+
+class SectionListener extends ObjectListener {
+    protected onWallDown:SectionWallMouseHandler;
+    protected onPlaneUp:SectionWallMouseHandler;
+    protected onPlaneMove:EventHandler;
+
+    constructor(protected eventManager:EventManager,
+                protected section:Section,
+                protected sections:Sections) {
+        super();
+        if (this.isInvalid()) {
+            return;
+        }
+
+        // Задаём обработчики событий.
+        this.onWallDown = new SectionWallMouseHandler(section, sections, EventTypeEnum.MouseDown);
+        this.onPlaneUp = new SectionWallMouseHandler(section, sections, EventTypeEnum.MouseUp);
+        this.onPlaneMove = new SectionPlaneMoveHandler(section, sections);
+    }
+
+    /**
+     * Содержимое некорректное
+     *
+     * @returns {boolean}
+     */
+    protected isInvalid() {
+        return !this.section.wall;
+    }
+
+    listen(add:boolean = true) {
+        if (this.isInvalid()) {
+            return;
+        }
+        this.eventManager
+            .toggle(this.onWallDown.eventType, this.section.wall, this.onWallDown, add)
+            .toggle(this.onPlaneUp.eventType, this.eventManager.mouse.plane, this.onPlaneUp, add)
+            .toggle(EventTypeEnum.MouseMove, this.eventManager.mouse.plane, this.onPlaneMove, add);
     }
 }
 
@@ -577,18 +873,14 @@ class SectionEvent {
 class Sections extends Object3D {
     protected sections:Section[] = [];
     protected sectionSize:V3;
-    protected events:SectionsEvents;
     public innerResizing:boolean = false;
 
     constructor(public direction:SectionsDirection,
-                protected mouseEventManager:MouseEventManager,
                 protected size:V3,
                 public thickness:number,
                 protected amount = 3,
                 public minSize = 20) {
         super();
-
-        this.events = new SectionsEvents(mouseEventManager, this);
         this.sectionSize = size.clone();
         this.setAmount(amount);
     }
@@ -617,11 +909,15 @@ class Sections extends Object3D {
         // Удаляем стенку у последней секции
         this.sections[amount - 1].wall = null;
 
-        this.events.update();
-
         this.updatePositionsAndSizesByRelative();
     }
 
+    /**
+     * Создать секцию
+     *
+     * @param relativeSize
+     * @returns {Section}
+     */
     protected createSection(relativeSize:number) {
         return new Section(this.thickness, relativeSize, this.direction);
     }
@@ -716,37 +1012,53 @@ class Sections extends Object3D {
         return this;
     }
 
+    /**
+     * Получить предыдущую секцию.
+     *
+     * @param section
+     * @returns {Section}
+     */
     getPrevious(section:Section) {
         return this.getNear(section, -1);
     }
 
+    /**
+     * Получить следующую секцию.
+     *
+     * @param section
+     * @returns {Section}
+     */
     getNext(section:Section) {
         return this.getNear(section, +1);
     }
 
+    /**
+     * Получить секцию рядом с указанной
+     *
+     * @param section
+     * @param deltaIndex
+     * @returns {Section}
+     */
     protected getNear(section:Section, deltaIndex:number):Section {
-        for (let index in this.sections) {
-            if (section == this.sections[index]) {
-                let nearIndex:number = parseInt(index) + deltaIndex;
-                return this.sections[nearIndex];
-            }
+        let index:number = this.sections.indexOf(section);
+        if (index == -1) {
+            return null;
         }
-
-        return null;
+        let nearIndex:number = index + deltaIndex;
+        return this.sections[nearIndex] || null;
     }
 }
 
-
+/**
+ * Секции-стены
+ */
 class WallSections extends Sections {
-
-    constructor(mouseEventManager:MouseEventManager,
-                boundSize:THREE.Vector3,
+    constructor(boundSize:THREE.Vector3,
                 thickness:number,
                 amount:number,
                 minWidth:number = 20) {
         super(
             SectionsDirection.Horizontal,
-            mouseEventManager,
             boundSize,
             thickness,
             amount,
@@ -758,28 +1070,21 @@ class WallSections extends Sections {
         var size = this.size.clone(),
             direction = SectionsDirection.Vertical;
 
-        size.setComponent(
-            direction,
-            relativeSize * this.getDirectionSize()
-        );
-
-        console.log(size, direction);
-
-        var amount = Math.floor(Math.random() * 3) + 3;
+        // Устанавливаем фактический размер сеции через относительный:
+        size.setComponent(direction, relativeSize * this.getDirectionSize());
 
         return (new WallSection(this.thickness, relativeSize, direction)).setShelves(
-            new ShelfSections(
-                this.mouseEventManager,
-                size,
-                this.thickness,
-                amount
-            )
+            new ShelfSections(size, this.thickness, Math.floor(Math.random() * 3) + 3)
         );
+    }
+
+    getShelfSections():ShelfSections[] {
+        return this.getAll().map((section:WallSection) => section.shelves);
     }
 }
 
 class WallSection extends Section {
-    protected shelves:ShelfSections;
+    public shelves:ShelfSections;
 
     constructor(thickness:number, relativeSize:number, direction:SectionsDirection) {
         super(thickness, relativeSize, direction);
@@ -791,15 +1096,16 @@ class WallSection extends Section {
     }
 }
 
+/**
+ * Секции полок
+ */
 class ShelfSections extends Sections {
-    constructor(mouseEventManager:MouseEventManager,
-                boundSize:THREE.Vector3,
+    constructor(boundSize:THREE.Vector3,
                 thickness:number,
                 amount:number,
                 minSize:number = 20) {
         super(
             SectionsDirection.Vertical,
-            mouseEventManager,
             boundSize,
             thickness,
             amount,
@@ -808,13 +1114,130 @@ class ShelfSections extends Sections {
     }
 }
 
+abstract class CupboardHandler extends EventHandler {
+    constructor(protected mouseEvents:CupboardListener, protected cupboard:Cupboard) {
+        super();
+    }
+}
+
+class CupboardPlaneMouseMoveHandler extends CupboardHandler {
+    handle(data:MouseEventData) {
+        let point = data.getPlaneIntersection().point;
+
+        for (let index = 0; index < 3; index++) {
+            this.changeComponent(index, point);
+        }
+    }
+
+    protected changeComponent(index:number, point:V3) {
+        if (!this.mouseEvents.changingSize.getComponent(index)) {
+            return;
+        }
+
+        // Получаем размер шкафа по данному направлению:
+        let previousSize = this.mouseEvents.previousSize.getComponent(index);
+
+        // Какой компонент координаты мыши брать:
+        let mouseIndex = index;
+
+        // При изменении глубины меняем по изменению Z:
+        if (index == 2) {
+            mouseIndex = 1;
+        }
+
+        // Координата на плоскости:
+        let planeCoordinate = point.getComponent(mouseIndex);
+
+        // Предыдущая координата на плоскости:
+        let initialPlaneCoordinate = this.mouseEvents.resizeStartPoint.getComponent(mouseIndex);
+
+        // Изменение координаты:
+        let deltaCoordinate = planeCoordinate - initialPlaneCoordinate;
+
+        // Размер шкафа: предыдущий размер + координата
+        let size = previousSize + deltaCoordinate;
+
+        this.cupboard.setSizeComponent(index, size);
+    }
+}
+
+class CupboardMouseUpHandler extends CupboardHandler {
+    handle(data:EventData) {
+        this.mouseEvents.changingSize.set(0, 0, 0);
+    }
+}
+
+class CupboardPlaneMouseDownHandler extends CupboardHandler {
+    handle(data:MouseEventData) {
+        this.mouseEvents.resizeStartPoint = data.getPlaneIntersection().point;
+        this.mouseEvents.previousSize = this.cupboard.size.clone();
+    }
+}
+
+class WallMouseDownHandler extends CupboardHandler {
+    constructor(mouseEvents:CupboardListener, cupboard:Cupboard, protected index:number) {
+        super(mouseEvents, cupboard);
+    }
+
+    handle(data:EventData) {
+        this.mouseEvents.changingSize.setComponent(this.index, 1);
+    }
+}
+
+enum Coordinate {
+    X = 0,
+    Y = 1,
+    Z = 2
+}
+
+class CupboardListener extends ObjectListener {
+    protected wallDown:WallMouseDownHandler[] = [];
+    protected planeMove:CupboardPlaneMouseMoveHandler;
+    protected globalUp:CupboardMouseUpHandler;
+    protected planeDown:CupboardPlaneMouseDownHandler;
+    public changingSize:V3 = new V3();
+    public previousSize:V3;
+    public resizeStartPoint:V3;
+
+    constructor(protected cupboard:Cupboard, protected eventManager:EventManager) {
+        super();
+        for (var i = 0; i < 3; i++) {
+            this.wallDown[i] = new WallMouseDownHandler(this, cupboard, i);
+        }
+        this.planeMove = new CupboardPlaneMouseMoveHandler(this, this.cupboard);
+        this.globalUp = new CupboardMouseUpHandler(this, this.cupboard);
+        this.planeDown = new CupboardPlaneMouseDownHandler(this, this.cupboard);
+    }
+
+    listen(add:boolean = true) {
+        // Невидимая огромная плоскость
+        let plane = this.eventManager.mouse.plane;
+        
+        this.eventManager
+            .toggle(EventTypeEnum.MouseMove, plane, this.planeMove, add)
+            .toggle(EventTypeEnum.MouseUpGlobal, null, this.globalUp, add)
+            .toggle(EventTypeEnum.MouseDown, plane, this.planeDown, add);
+
+        let wallToCoordinate:[Wall, Coordinate][] = [
+            [this.cupboard.walls.right, Coordinate.X],
+            [this.cupboard.walls.bottom, Coordinate.Y],
+            [this.cupboard.walls.left, Coordinate.Z],
+            [this.cupboard.walls.top, Coordinate.Z],
+        ];
+        
+        for (let [wall, coordinate] of wallToCoordinate) {
+            this.eventManager.toggle(EventTypeEnum.MouseDown, wall, this.wallDown[coordinate], add);
+        }
+    }
+}
 
 class Cupboard extends Object3D {
-    protected walls:Walls;
-    protected sections:Sections;
+    public walls:Walls;
+    public sections:WallSections;
 
-    constructor(protected mouseEventManager:MouseEventManager,
-                protected size:V3 = new V3(300, 250, 60),
+    // Обработчики событий:
+
+    constructor(public size:V3 = new V3(300, 250, 60),
                 protected thickness:number = 5,
                 protected minSize:V3 = new V3(100, 100, 30),
                 protected maxSize:V3 = new V3(500, 400, 100)) {
@@ -823,49 +1246,10 @@ class Cupboard extends Object3D {
 
         // Количество секций
         var sectionsAmount = Math.floor(Math.random() * 3 + 3);
-        this.sections = new WallSections(mouseEventManager, size, thickness, sectionsAmount);
+        this.sections = new WallSections(size, thickness, sectionsAmount);
+
         this.add(this.walls);
         this.add(this.sections);
-
-        this.listen();
-    }
-
-    listen() {
-        let change = new V3(),
-            initPoint:V3,
-            initSize:V3;
-
-        this.mouseEventManager
-            .onPlane(EventTypeEnum.MouseMove, (event:MyMouseEvent) => {
-                if (!initPoint) return;
-
-                let point = event.getPlaneIntersection().point;
-                for (let i = 0; i < 3; i++) {
-                    // Какую координату мыши получаем (x / y)
-                    var mouseIndex = i == 2 ? 0 : i,
-                        size = initSize.getComponent(i) + point.getComponent(mouseIndex) - initPoint.getComponent(mouseIndex);
-                    change.getComponent(i) && this.setSizeComponent(i, size);
-                }
-            })
-            .onPlane(EventTypeEnum.MouseUp, () => {
-                change.set(0, 0, 0);
-            })
-            .onPlane(EventTypeEnum.MouseDown, (event:MyMouseEvent) => {
-                initPoint = event.getPlaneIntersection().point;
-                initSize = this.size.clone();
-            })
-            .onObject(EventTypeEnum.MouseDown, this.walls.right, () => {
-                change.x = 1;
-            })
-            .onObject(EventTypeEnum.MouseDown, this.walls.bottom, () => {
-                change.y = 1;
-            })
-            .onObject(EventTypeEnum.MouseDown, this.walls.left, () => {
-                change.z = 1;
-            })
-            .onObject(EventTypeEnum.MouseDown, this.walls.top, () => {
-                change.z = 1;
-            });
     }
 
     setSizeComponent(index:number, size:number):Cupboard {
