@@ -172,7 +172,6 @@ class EventTypes {
     on(type:EventTypeEnum, object:Object3D, handler:EventHandler) {
         // Получаем слушателя (или создаём его) и удаляем его обработчик:
         this.getListener(type, object, true).addHandler(handler);
-        console.log(this);
         return this;
     }
 
@@ -264,7 +263,7 @@ class Listener {
 
 abstract class EventPasser {
     constructor(protected eventManager:EventManager) {
-        
+
     }
 
     abstract listen():void;
@@ -287,7 +286,8 @@ class KeyboardEventPasser extends EventPasser {
 
     private trigger(event:JQueryKeyEventObject, type:EventTypeEnum) {
         let data = new KeyBoardEventData();
-        data.code = event.keyCode;
+        data.jquery = event;
+        data.type = type;
         this.eventManager.trigger(type, data);
     }
 }
@@ -387,7 +387,7 @@ class MouseObjectEventDataModifier extends ObjectEventDataModifier {
         if (intersection && intersection.point) {
             data.setIntersection(intersection);
         }
-        else{
+        else {
             data.skip = true;
         }
 
@@ -440,7 +440,7 @@ class EventManager {
         add
             ? this.on(type, object, handler)
             : this.off(type, object, handler);
-        
+
         return this;
     }
 
@@ -452,7 +452,7 @@ class EventManager {
     triggerAll(type:EventTypeEnum, data:EventData, objectDataModifier:ObjectEventDataModifier = null) {
         for (let object of this.eventTypes.getObjects(type)) {
             objectDataModifier.modify(data, object);
-            if (data.skip){
+            if (data.skip) {
                 data.skip = false;
                 continue;
             }
@@ -549,19 +549,20 @@ class Scene extends THREE.Scene {
     // Заполнить сцену объектами
     fill(eventManager:EventManager) {
         let cupboard = new Cupboard();
-        this.adds(cupboard, new Light());
+        this.adds(cupboard, new Lights());
 
         // Добавляем события:
         let listeners:ObjectListener[] = [
             new CupboardListener(cupboard, eventManager),
-            new SectionsListener(cupboard.sections, eventManager),
+            (new SectionsListener(eventManager)).setSections(cupboard.sections),
+            (new DoorsListener(eventManager)).setSections(cupboard.doors),
         ].concat();
 
         // Получаем секции полок:
         listeners = listeners.concat(
             cupboard.sections
                 .getShelfSections()
-                .map((sections:ShelfSections) => new SectionsListener(sections, eventManager))
+                .map((sections:ShelfSections) => (new SectionsListener(eventManager)).setSections(sections))
         );
 
         listeners.forEach((events:ObjectListener) => events.listen(true));
@@ -581,17 +582,22 @@ class Scene extends THREE.Scene {
     }
 }
 
-// Освещение
-class Light extends THREE.PointLight {
+class Lights extends Object3D {
     constructor() {
-        super(THREE.ColorKeywords.white);
-        this.position.add(new V3(200, 300, 500));
-        this.intensity = 0.7;
+        super();
+        let bright = new THREE.PointLight(0xffffff);
+        bright.position.copy(new V3(200, 300, 500));
+        bright.intensity = 0.9;
+
+        let ambient = new THREE.AmbientLight(0x666666);
+
+        this.add(bright);
+        this.add(ambient);
     }
 }
 
 // Стена
-class Wall extends THREE.Mesh {
+class Wood extends THREE.Mesh {
     constructor(size:V3 = new V3(1, 1, 1), position:V3 = new V3()) {
         super(
             new WallGeometry() as any as THREE.BufferGeometry,
@@ -642,6 +648,9 @@ enum KeyCodeEnum {
 
 class KeyBoardEventData extends EventData {
     public code:KeyCodeEnum;
+    public down:boolean;
+    public jquery:JQueryKeyEventObject;
+    public type:EventTypeEnum;
 }
 
 // Геометрия стены
@@ -653,9 +662,11 @@ class WallGeometry extends THREE.BoxGeometry {
 
 // Материал стены
 class WallMaterial extends THREE.MeshLambertMaterial {
+    protected static color = 0xff0000;
+
     constructor() {
         super({
-            color: 0xff0000
+            color: WallMaterial.color
         });
     }
 }
@@ -673,17 +684,24 @@ class BigPlane extends THREE.Mesh {
     }
 }
 
-class Section extends Object3D {
-    public wall:Wall = null;
+class Section extends Object3D implements Resizable {
+    public wood:Wood = null;
     protected size:V3 = new V3();
     public resizing:boolean = false;
-
-    constructor(protected thickness:number, public relativeSize:number, protected direction:SectionsDirection) {
+    
+    constructor(protected thickness:number,
+                public relativeSize:number,
+                protected direction:Coordinate) {
         super();
 
         // Добавляем стенку секции
-        this.add(this.wall = new Wall());
-        this.wall.scale.setComponent(direction, thickness);
+        this.add(this.wood = new Wood());
+        this.wood.scale.setComponent(direction, thickness);
+    }
+
+    deleteWall() {
+        this.remove(this.wood);
+        delete this.wood;
     }
 
     /**
@@ -693,27 +711,30 @@ class Section extends Object3D {
      * @param size
      * @returns {Section}
      */
-    setSizeComponent(index:number, size:number):Section {
+    setSizeComponent(index:Coordinate, size:number) {
         this.size.setComponent(index, size);
-        if (!this.wall) return;
 
-        if (index == 0) {
-            this.wall.position.setX(size / 2);
-            return this;
+        // Стены нет - выходим.
+        if (!this.wood) {
+            return;
         }
 
-        this.wall.scale.setComponent(index, size);
-        return this;
+        if (index == this.direction) {
+            this.wood.position.setComponent(this.direction, size / 2);
+            return;
+        }
+
+        this.wood.scale.setComponent(index, size);
     }
 
     setSize(size:V3):Section {
-        for (var i = 0; i < 3; i++) {
+        for (let i = 0; i < 3; i++) {
             this.setSizeComponent(i, size.getComponent(i));
         }
         return this;
     }
 
-    getWallComponent(index:number) {
+    getWallPositionComponent(index:number) {
         return this.position.getComponent(index) + this.size.getComponent(index) / 2;
     }
 
@@ -727,11 +748,6 @@ class Section extends Object3D {
     }
 }
 
-enum SectionsDirection{
-    Horizontal = 0,
-    Vertical = 1
-}
-
 abstract class ObjectListener {
     abstract listen(add:boolean):void;
 }
@@ -741,10 +757,10 @@ abstract class ObjectListener {
  */
 class SectionsListener extends ObjectListener {
     protected sectionsEvents:SectionListener[] = [];
+    protected sections:Sections;
 
-    constructor(protected sections:Sections, protected eventManager:EventManager) {
+    constructor(protected eventManager:EventManager) {
         super();
-        this.setSections(sections);
     }
 
     /**
@@ -756,6 +772,7 @@ class SectionsListener extends ObjectListener {
         this.listen(false);
         this.sections = sections;
         this.sections.getAll().forEach(this.addSectionEvent);
+        return this;
     }
 
     protected addSectionEvent = (section:Section) => {
@@ -768,6 +785,23 @@ class SectionsListener extends ObjectListener {
 
     listen(add:boolean = true):void {
         this.sectionsEvents.forEach((event:SectionListener) => event.listen(add));
+    }
+}
+
+/**
+ * События дверей
+ */
+class DoorsListener extends SectionsListener {
+
+    constructor(eventManager:EventManager) {
+        super(eventManager);
+        this.addSectionEvent = (door:DoorSection) => {
+            // Создаём событие для секции:
+            let event = new DoorListener(this.eventManager, door, this.sections as DoorSections);
+
+            // Добавляем его в массив:
+            this.sectionsEvents.push(event);
+        };
     }
 }
 
@@ -784,7 +818,25 @@ class SectionWallMouseHandler extends EventHandler {
 
     handle(data:EventData) {
         let resizing = (this.eventType == EventTypeEnum.MouseDown);
+
+        if (resizing && this.sections.oneResizing) {
+            return;
+        }
+
         this.sections.setSectionResizing(this.section, resizing);
+    }
+}
+
+class DoorMouseUpHandler extends EventHandler {
+    constructor(protected door:DoorSection,
+                protected doors:DoorSections,
+                public eventType:EventTypeEnum) {
+        super();
+    }
+
+    handle(data:EventData) {
+        this.door.wood.geometry.translate(0.3, 0, 0);
+        this.door.wood.rotation.y += Math.PI / 4;
     }
 }
 
@@ -800,10 +852,11 @@ class SectionPlaneMoveHandler extends EventHandler {
         let direction = this.sections.direction,
             previous:Section = this.sections.getPrevious(this.section),
             next:Section = this.sections.getNext(this.section),
-            halfDirectionSize = this.sections.getDirectionSize() / 2,
+            directionSize = this.sections.getDirectionSize(),
+            halfDirectionSize = directionSize / 2,
             mouseCoordinate = data.getPlaneIntersection().point.getComponent(direction), // координата мыши
-            minEdge = previous ? previous.getWallComponent(direction) : -halfDirectionSize, // откуда считать размер
-            maxCoordinate = next ? next.getWallComponent(direction) : +halfDirectionSize, // максимум координаты мыши
+            minEdge = previous ? previous.getWallPositionComponent(direction) : -halfDirectionSize, // откуда считать размер
+            maxCoordinate = next ? next.getWallPositionComponent(direction) : +halfDirectionSize, // максимум координаты мыши
             minCoordinate = minEdge, // минимум координаты мыши
             minSectionSize = this.sections.thickness + this.sections.minSize; // минимальный размер секции
 
@@ -818,22 +871,18 @@ class SectionPlaneMoveHandler extends EventHandler {
         mouseCoordinate = Math.min(mouseCoordinate, maxCoordinate);
         mouseCoordinate = Math.max(mouseCoordinate, minCoordinate);
 
-        // Задаём размер секции и её изменение
-        let size = mouseCoordinate - minEdge,
-            delta = size - this.section.getSizeComponent(direction);
-
         // Устанавливаем размер секции
-        this.sections.setSectionSizeComponent(this.section, size);
+        let size = mouseCoordinate - minEdge,
+            relativeSize = size / directionSize;
 
-        // Если есть следуюшая секция - изменяем её размер обратно пропорционально текущей
-        next && this.sections.setSectionSizeComponent(next, next.getSizeComponent(direction) - delta);
+        this.sections.setRelativeSectionSizeComponent(this.section, relativeSize);
     }
 }
 
 class SectionListener extends ObjectListener {
     protected onWallDown:SectionWallMouseHandler;
     protected onPlaneUp:SectionWallMouseHandler;
-    protected onPlaneMove:EventHandler;
+    protected onPlaneMove:SectionPlaneMoveHandler;
 
     constructor(protected eventManager:EventManager,
                 protected section:Section,
@@ -855,7 +904,7 @@ class SectionListener extends ObjectListener {
      * @returns {boolean}
      */
     protected isInvalid() {
-        return !this.section.wall;
+        return !this.section.wood;
     }
 
     listen(add:boolean = true) {
@@ -863,25 +912,46 @@ class SectionListener extends ObjectListener {
             return;
         }
         this.eventManager
-            .toggle(this.onWallDown.eventType, this.section.wall, this.onWallDown, add)
+            .toggle(this.onWallDown.eventType, this.section.wood, this.onWallDown, add)
             .toggle(this.onPlaneUp.eventType, this.eventManager.mouse.plane, this.onPlaneUp, add)
             .toggle(EventTypeEnum.MouseMove, this.eventManager.mouse.plane, this.onPlaneMove, add);
     }
 }
 
-// Внутренние секции шкафа
-class Sections extends Object3D {
-    protected sections:Section[] = [];
-    protected sectionSize:V3;
-    public innerResizing:boolean = false;
+class DoorListener extends SectionListener {
 
-    constructor(public direction:SectionsDirection,
+    protected onWoodUp:DoorMouseUpHandler;
+    
+    constructor(protected eventManager:EventManager,
+                protected door:DoorSection,
+                protected doors:DoorSections) {
+        super(eventManager, door, doors);
+
+        // Задаём обработчики событий.
+        this.onWoodUp = new DoorMouseUpHandler(door, doors, EventTypeEnum.MouseDown);
+    }
+
+
+    listen(add:boolean = true) {
+        this.eventManager.toggle(EventTypeEnum.MouseUp, this.door.wood, this.onWoodUp, add);
+    }
+}
+
+
+// Внутренние секции шкафа
+class Sections extends Object3D implements Resizable {
+    protected sections:Section[] = [];
+    public oneResizing:boolean = false;
+
+    constructor(public direction:Coordinate,
                 protected size:V3,
                 public thickness:number,
                 protected amount = 3,
-                public minSize = 20) {
+                public minSize = 20,
+                protected deleteLastWood = true) {
         super();
-        this.sectionSize = size.clone();
+
+        // Устанавливаем изначальное количество секций:
         this.setAmount(amount);
     }
 
@@ -892,24 +962,31 @@ class Sections extends Object3D {
     setAmount(amount:number) {
         this.amount = amount;
 
+        // Удаляем существующие секции:
         this.clear();
 
-        let boundSize:number = this.getDirectionSize(),
-            size:number = boundSize / amount,
-            relativeSize:number = size / boundSize;
-
-        this.sectionSize.setComponent(this.direction, size);
+        // Размер всех секций:
+        let sectionsSize:number = this.getDirectionSize(),
+        // Размер одной секции:
+            size:number = sectionsSize / amount,
+        // Относительный размер секции:
+            relativeSize:number = size / sectionsSize;
 
         for (let i = 0; i < amount; i++) {
+            // Создаём секцию с заданным относительным размером:
             let section = this.createSection(relativeSize);
+
+            // Добавляем сецию в массив секций и в объект:
             this.sections.push(section);
             this.add(section);
         }
 
-        // Удаляем стенку у последней секции
-        this.sections[amount - 1].wall = null;
+        // Удаляем стенку / полку у последней секции
+        if (this.deleteLastWood){
+            this.sections[amount - 1].deleteWall();
+        }
 
-        this.updatePositionsAndSizesByRelative();
+        this.updateSectionsGeometry();
     }
 
     /**
@@ -931,7 +1008,7 @@ class Sections extends Object3D {
      */
     setSectionResizing(section:Section, resizing:boolean = true) {
         section.resizing = resizing;
-        this.innerResizing = resizing;
+        this.oneResizing = resizing;
         return this;
     }
 
@@ -940,12 +1017,33 @@ class Sections extends Object3D {
      *
      * @param section
      * @param size
+     * @param checkNext
      * @returns {Sections}
      */
-    setSectionSizeComponent(section:Section, size:number) {
-        section.setSizeComponent(this.direction, size);
-        section.relativeSize = size / this.getDirectionSize();
-        return this;
+    setRelativeSectionSizeComponent(section:Section, size:number, checkNext:boolean = true):void {
+        // Изменение относительного размера:
+        let deltaSize = size - section.relativeSize;
+
+        // Устанавливаем относительный размер:
+        section.relativeSize = size;
+
+        // Если не надо проверять следующий элемент, выходим:
+        if (!checkNext) {
+            this.updateSectionsGeometry();
+            return;
+        }
+
+
+        let next = this.getNext(section);
+        // Следующего нет:
+        if (!next) {
+            this.updateSectionsGeometry();
+            return;
+        }
+
+        // Устанавливаем размер следующему элементу:
+        this.setRelativeSectionSizeComponent(next, next.relativeSize - deltaSize, false);
+
     }
 
     /**
@@ -954,9 +1052,9 @@ class Sections extends Object3D {
      * @param index
      * @param size
      */
-    setSizeComponent(index:number, size:number) {
+    setSizeComponent(index:Coordinate, size:number) {
         this.size.setComponent(index, size);
-        this.updatePositionsAndSizesByRelative();
+        this.updateSectionsGeometry();
     }
 
     /**
@@ -973,31 +1071,30 @@ class Sections extends Object3D {
      *
      * @returns {Sections}
      */
-    updatePositionsAndSizesByRelative() {
-        // Координата секции (x / y)
+    updateSectionsGeometry() {
+        // Положение секции
         let position = -this.getDirectionSize() / 2;
 
-        this.sections.forEach((section:Section) => {
-            // Размер секции
-            let size:number = this.getDirectionSize() * section.relativeSize,
-                half = size / 2;
+        for (let section of this.sections) {
+            // Размер секции по направлению
+            let directionSize:number = this.getDirectionSize() * section.relativeSize;
 
             // Отодвигаем координату центра секции на половину размера.
-            position += half;
+            position += directionSize / 2;
 
             // Размер секции
             let sectionSize = this.size.clone();
 
             // Устанавливаем размер секции по направлению
-            sectionSize.setComponent(this.direction, size);
+            sectionSize.setComponent(this.direction, directionSize);
 
             // Устанавливаем размер и положение секции
             section
                 .setSize(sectionSize)
                 .setPositionComponent(this.direction, position);
 
-            position += half;
-        });
+            position += directionSize / 2;
+        }
         return this;
     }
 
@@ -1007,8 +1104,12 @@ class Sections extends Object3D {
      * @returns {Sections}
      */
     protected clear() {
+        // Удаляем каждую секцию из объекта:
         this.sections.forEach((section:Section) => this.remove(section));
+
+        // Очищаем массив с секциями:
         this.sections = [];
+
         return this;
     }
 
@@ -1049,6 +1150,18 @@ class Sections extends Object3D {
     }
 }
 
+class DoorSections extends Sections{
+    protected deleteLastWood = false;
+
+    constructor(size:THREE.Vector3, thickness:number, amount:number = 3, minSize:number = 20) {
+        super(Coordinate.X, size, thickness, amount, minSize, false);
+    }
+
+    protected createSection(relativeSize:number):Section {
+        return new DoorSection(this.thickness, relativeSize);
+    }
+}
+
 /**
  * Секции-стены
  */
@@ -1058,7 +1171,7 @@ class WallSections extends Sections {
                 amount:number,
                 minWidth:number = 20) {
         super(
-            SectionsDirection.Horizontal,
+            Coordinate.X,
             boundSize,
             thickness,
             amount,
@@ -1066,15 +1179,29 @@ class WallSections extends Sections {
         );
     }
 
-    protected createSection(relativeSize:number):Section {
-        var size = this.size.clone(),
-            direction = SectionsDirection.Vertical;
+    /** @inheritDoc */
+    protected createSection(relativeSize:number) {
+        // Создаём секцию и в ней задаём секции с полками:
+        let section = new WallSection(this.thickness, relativeSize),
+            shelfWidth = relativeSize * this.getDirectionSize(),
+            shelves = this.createShelves(shelfWidth);
 
-        // Устанавливаем фактический размер сеции через относительный:
-        size.setComponent(direction, relativeSize * this.getDirectionSize());
+        section.setShelves(shelves);
+        return section;
+    }
 
-        return (new WallSection(this.thickness, relativeSize, direction)).setShelves(
-            new ShelfSections(size, this.thickness, Math.floor(Math.random() * 3) + 3)
+    /**
+     * Создать секцию с полками.
+     *
+     * @param width
+     * @returns {ShelfSections}
+     */
+    protected createShelves(width:number) {
+        // Размер секции полок:
+        return new ShelfSections(
+            this.size.clone().setX(width),
+            this.thickness,
+            Math.floor(Math.random() * 3) + 3
         );
     }
 
@@ -1083,16 +1210,43 @@ class WallSections extends Sections {
     }
 }
 
+class DoorSection extends Section {
+    constructor(thickness:number, relativeSize:number) {
+        super(thickness, relativeSize, Coordinate.X);
+        this.setSizeComponent(Coordinate.Z, thickness);
+    }
+    
+    setSizeComponent(index:Coordinate, size:number) {
+        if (index == Coordinate.X) {
+            size *= 0.97;
+        }
+
+        if (index == Coordinate.Z) {
+            this.wood.position.setZ(size / 2 + this.thickness);
+            size = this.thickness;
+        }
+        
+        this.size.setComponent(index, size);
+        this.wood.scale.setComponent(index, size);
+    }
+}
+
 class WallSection extends Section {
     public shelves:ShelfSections;
 
-    constructor(thickness:number, relativeSize:number, direction:SectionsDirection) {
-        super(thickness, relativeSize, direction);
+    constructor(thickness:number, relativeSize:number) {
+        super(thickness, relativeSize, Coordinate.X);
     }
 
     setShelves(shelves:ShelfSections) {
         this.add(this.shelves = shelves);
         return this;
+    }
+
+
+    setSizeComponent(index:Coordinate, size:number):void {
+        super.setSizeComponent(index, size);
+        this.shelves.setSizeComponent(index, size);
     }
 }
 
@@ -1100,13 +1254,13 @@ class WallSection extends Section {
  * Секции полок
  */
 class ShelfSections extends Sections {
-    constructor(boundSize:THREE.Vector3,
+    constructor(size:THREE.Vector3,
                 thickness:number,
                 amount:number,
                 minSize:number = 20) {
         super(
-            SectionsDirection.Vertical,
-            boundSize,
+            Coordinate.Y,
+            size,
             thickness,
             amount,
             minSize
@@ -1190,11 +1344,75 @@ enum Coordinate {
     Z = 2
 }
 
+class CupboardKeyHandler extends CupboardHandler {
+    protected rotateInterval:number;
+    protected moveInterval:number;
+
+    handle(data:KeyBoardEventData):void {
+        data.type == EventTypeEnum.KeyDown
+            ? this.down(data)
+            : this.up(data);
+    }
+
+    protected up(data:KeyBoardEventData):void {
+        switch (data.jquery.keyCode) {
+            case KeyCodeEnum.LEFT:
+            case KeyCodeEnum.RIGHT:
+                this.stopRotate();
+                break;
+
+            case KeyCodeEnum.UP:
+            case KeyCodeEnum.DOWN:
+                this.stopMove();
+                break;
+        }
+    }
+
+    protected down(data:KeyBoardEventData):void {
+        switch (data.jquery.keyCode) {
+            case KeyCodeEnum.LEFT:
+                this.startRotate(+1);
+                break;
+
+            case KeyCodeEnum.RIGHT:
+                this.startRotate(-1);
+                break;
+
+            case KeyCodeEnum.UP:
+                this.startMove(+1);
+                break;
+
+            case KeyCodeEnum.DOWN:
+                this.startMove(-1);
+                break;
+        }
+    }
+
+    protected stopRotate() {
+        clearInterval(this.rotateInterval);
+    }
+
+    protected startRotate(multiplier:number = 1) {
+        this.stopRotate();
+        this.rotateInterval = setInterval(() => this.cupboard.rotation.y += 0.1 * multiplier, 20);
+    }
+
+    private startMove(multiplier:number) {
+        this.stopMove();
+        this.moveInterval = setInterval(() => this.cupboard.position.z += multiplier * 5, 20);
+    }
+
+    private stopMove() {
+        clearInterval(this.moveInterval);
+    }
+}
+
 class CupboardListener extends ObjectListener {
     protected wallDown:WallMouseDownHandler[] = [];
     protected planeMove:CupboardPlaneMouseMoveHandler;
     protected globalUp:CupboardMouseUpHandler;
     protected planeDown:CupboardPlaneMouseDownHandler;
+    protected key:CupboardKeyHandler;
     public changingSize:V3 = new V3();
     public previousSize:V3;
     public resizeStartPoint:V3;
@@ -1207,67 +1425,100 @@ class CupboardListener extends ObjectListener {
         this.planeMove = new CupboardPlaneMouseMoveHandler(this, this.cupboard);
         this.globalUp = new CupboardMouseUpHandler(this, this.cupboard);
         this.planeDown = new CupboardPlaneMouseDownHandler(this, this.cupboard);
+        this.key = new CupboardKeyHandler(this, this.cupboard);
     }
 
     listen(add:boolean = true) {
         // Невидимая огромная плоскость
         let plane = this.eventManager.mouse.plane;
-        
+
         this.eventManager
             .toggle(EventTypeEnum.MouseMove, plane, this.planeMove, add)
             .toggle(EventTypeEnum.MouseUpGlobal, null, this.globalUp, add)
-            .toggle(EventTypeEnum.MouseDown, plane, this.planeDown, add);
+            .toggle(EventTypeEnum.MouseDown, plane, this.planeDown, add)
+            .toggle(EventTypeEnum.KeyDown, null, this.key, add)
+            .toggle(EventTypeEnum.KeyUp, null, this.key, add);
 
-        let wallToCoordinate:[Wall, Coordinate][] = [
+        for (let type of [
+            EventTypeEnum.KeyDown,
+            EventTypeEnum.KeyUp,
+        ]) {
+            this.eventManager.toggle(type, null, this.key, add);
+        }
+
+        let wallToCoordinate:[Wood, Coordinate][] = [
             [this.cupboard.walls.right, Coordinate.X],
             [this.cupboard.walls.bottom, Coordinate.Y],
             [this.cupboard.walls.left, Coordinate.Z],
             [this.cupboard.walls.top, Coordinate.Z],
         ];
-        
+
         for (let [wall, coordinate] of wallToCoordinate) {
             this.eventManager.toggle(EventTypeEnum.MouseDown, wall, this.wallDown[coordinate], add);
         }
     }
 }
 
-class Cupboard extends Object3D {
+class Cupboard extends Object3D implements Resizable {
     public walls:Walls;
     public sections:WallSections;
+    public doors:DoorSections;
+    protected resizables:Resizable[] = [];
 
     // Обработчики событий:
 
     constructor(public size:V3 = new V3(300, 250, 60),
-                protected thickness:number = 5,
+                protected thickness:number = 3,
                 protected minSize:V3 = new V3(100, 100, 30),
                 protected maxSize:V3 = new V3(500, 400, 100)) {
         super();
+
+        // Стены шкафа:
         this.walls = new Walls(size, thickness);
 
-        // Количество секций
-        var sectionsAmount = Math.floor(Math.random() * 3 + 3);
-        this.sections = new WallSections(size, thickness, sectionsAmount);
+        // Секции с внутренними стенками и полками:
+        let rand = (from:number, to:number) => Math.floor(Math.random() * (to - from) + from);
+        this.sections = new WallSections(size, thickness, rand(3, 6));
+        this.doors = new DoorSections(size, thickness, rand(3, 6));
+        this.resizables.push(this.walls, this.sections, this.doors);
 
         this.add(this.walls);
         this.add(this.sections);
+        this.add(this.doors);
     }
 
-    setSizeComponent(index:number, size:number):Cupboard {
+    /**
+     * Установить размер.
+     *
+     * @param index
+     * @param size
+     * @returns {Cupboard}
+     */
+    setSizeComponent(index:Coordinate, size:number) {
+        size = this.limitSize(index, size);
+        this.size.setComponent(index, size);
+        for (let resizable of this.resizables) {
+            resizable.setSizeComponent(index, size);
+        }
+    }
+
+    protected limitSize(index:Coordinate, size:number):number {
         size = Math.max(size, this.minSize.getComponent(index));
         size = Math.min(size, this.maxSize.getComponent(index));
-        this.size.setComponent(index, size);
-        this.walls.setSizeComponent(index, size);
-        this.sections.setSizeComponent(index, size);
-        return this;
+        return size;
     }
 }
 
-class Walls extends Object3D {
-    public left:Wall;
-    public right:Wall;
-    public top:Wall;
-    public bottom:Wall;
-    public back:Wall;
+interface Resizable {
+    setSizeComponent(index:Coordinate, size:number):void;
+}
+
+class Walls extends Object3D implements Resizable {
+    public left:Wood;
+    public right:Wood;
+    public top:Wood;
+    public bottom:Wood;
+    public back:Wood;
 
     constructor(protected boundSize:V3, protected thickness:number) {
         super();
@@ -1282,10 +1533,10 @@ class Walls extends Object3D {
     protected createLeftRight(boundSize:V3, thickness:number):Walls {
         let size = boundSize.clone().setX(thickness);
         let position = new V3((thickness - boundSize.x) / 2, 0, 0);
-        this.left = new Wall(size, position);
+        this.left = new Wood(size, position);
 
         position.x *= -1;
-        this.right = new Wall(size, position);
+        this.right = new Wood(size, position);
 
         this.add(this.left);
         this.add(this.right);
@@ -1296,9 +1547,9 @@ class Walls extends Object3D {
     protected createTopBottom(boundSize:V3, thickness:number):Walls {
         let size = boundSize.clone().setY(thickness).setX(boundSize.x - thickness * 2);
         let position = new V3(0, (boundSize.y - thickness) / 2, 0);
-        this.top = new Wall(size, position);
+        this.top = new Wood(size, position);
         position.y *= -1;
-        this.bottom = new Wall(size, position);
+        this.bottom = new Wood(size, position);
         this.add(this.top);
         this.add(this.bottom);
         return this;
@@ -1308,16 +1559,16 @@ class Walls extends Object3D {
     protected createBack(boundSize:V3, thickness:number):Walls {
         let size = boundSize.clone().setZ(thickness);
         let position = new V3(0, 0, -boundSize.z / 2);
-        this.back = new Wall(size, position);
+        this.back = new Wood(size, position);
         this.add(this.back);
         return this;
     }
 
-    setSizeComponent(index:number, size:number) {
+    setSizeComponent(index:Coordinate, size:number) {
         this.boundSize.setComponent(index, size);
 
         let half:number = size / 2,
-            resizables:Wall[] = [];
+            resizables:Wood[] = [];
 
         switch (index) {
             case 0:
@@ -1351,7 +1602,7 @@ class Walls extends Object3D {
                 break;
         }
 
-        resizables.forEach((wall:Wall) => wall.scale.setComponent(index, size));
+        resizables.forEach((wall:Wood) => wall.scale.setComponent(index, size));
 
         return this;
     }
