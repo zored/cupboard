@@ -9,7 +9,7 @@ $(() => {
         $window = $(window),
         
         // Объект канваса
-        canvas = new cupboard.Canvas(500, 500, $canvas, $window),
+        canvas = new cupboard.Canvas($window.innerWidth(), $window.innerHeight(), $canvas, $window),
 
         // Создаём мир шкафа
         world = new cupboard.World(canvas);
