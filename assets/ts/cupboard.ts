@@ -69,12 +69,14 @@ class MouseRaycaster extends THREE.Raycaster {
 
 // Типы событий мыши
 enum EventTypeEnum {
-    MouseDown = 0,
-    MouseUp = 1,
-    MouseMove = 2,
-    KeyDown = 3,
-    KeyUp = 4,
-    MouseUpGlobal = 5,
+    MouseDown,
+    MouseUp,
+    MouseMove,
+    KeyDown,
+    KeyUp,
+    MouseUpGlobal,
+    MouseEnter,
+    MouseLeave,
 }
 
 /**
@@ -294,6 +296,34 @@ class KeyboardEventPasser extends EventPasser {
     }
 }
 
+
+interface Touch {
+    identifier:number;
+    target:EventTarget;
+    screenX:number;
+    screenY:number;
+    clientX:number;
+    clientY:number;
+    pageX:number;
+    pageY:number;
+}
+
+interface TouchList {
+    length:number;
+    item (index:number):Touch;
+    identifiedTouch(identifier:number):Touch;
+}
+
+interface TouchEvent extends UIEvent {
+    touches:TouchList;
+    targetTouches:TouchList;
+    changedTouches:TouchList;
+    altKey:boolean;
+    metaKey:boolean;
+    ctrlKey:boolean;
+    shiftKey:boolean;
+}
+
 class MouseEventPasser extends EventPasser {
     protected raycaster:MouseRaycaster;
     public plane:BigPlane;
@@ -308,13 +338,25 @@ class MouseEventPasser extends EventPasser {
      * Начинаем слушать события мыши и после каждого выполням наши обработчики.
      */
     listen() {
-        this.canvas.getJQuery()
-            .mousedown(this.passToTrigger(EventTypeEnum.MouseDown))
-            .mousemove(this.passToTrigger(EventTypeEnum.MouseMove))
-            .mouseup(this.passToTrigger(EventTypeEnum.MouseUp));
+        this.canvas.getJQuery().on({
+            'mousedown': this.passToTrigger(EventTypeEnum.MouseDown),
+            'mousemove': this.passesToTrigger([EventTypeEnum.MouseMove, EventTypeEnum.MouseEnter, EventTypeEnum.MouseLeave]),
+            'mouseup': this.passToTrigger(EventTypeEnum.MouseUp),
+            'touchstart': this.passTouchToTrigger(EventTypeEnum.MouseDown),
+            'touchmove': this.passTouchToTrigger(EventTypeEnum.MouseMove),
+            'touchend': this.passTouchToTrigger(EventTypeEnum.MouseUp),
+        });
 
         this.canvas.$window
             .mouseup(this.passToTrigger(EventTypeEnum.MouseUpGlobal))
+    }
+
+    protected passesToTrigger(types:EventTypeEnum[]) {
+        return (event:JQueryMouseEventObject) => {
+            for (let type of types) {
+                this.trigger(new V2(event.offsetX, event.offsetY), type);
+            }
+        }
     }
 
     /**
@@ -324,7 +366,24 @@ class MouseEventPasser extends EventPasser {
      * @returns {function(JQueryMouseEventObject): void}
      */
     protected passToTrigger(type:EventTypeEnum) {
-        return (event:JQueryMouseEventObject) => this.trigger(event, type);
+        return (event:JQueryMouseEventObject) => this.trigger(new V2(event.offsetX, event.offsetY), type);
+    }
+
+    /**
+     * Позволяет пробросить событие из jQuery в наш trigger.
+     *
+     * @param type
+     * @returns {function(JQueryMouseEventObject): void}
+     */
+    protected passTouchToTrigger(type:EventTypeEnum) {
+        return (event:{originalEvent:TouchEvent, preventDefault:()=>void}) => {
+            let touch:Touch = event.originalEvent.touches.item(0);
+            if (!touch) {
+                return;
+            }
+            this.trigger(new V2(touch.pageX, touch.pageY), type);
+            event.preventDefault();
+        }
     }
 
     /**
@@ -340,13 +399,10 @@ class MouseEventPasser extends EventPasser {
     /**
      * Вызвать событие в EventManager
      *
-     * @param jqEvent
+     * @param mouse
      * @param type
      */
-    protected trigger(jqEvent:JQueryMouseEventObject, type:EventTypeEnum):void {
-        // Получаем положение мыши
-        let mouse = new V2(jqEvent.offsetX, jqEvent.offsetY);
-
+    protected trigger(mouse:V2, type:EventTypeEnum):void {
         // Получаем относительное положение мыши на канвасе
         let position = this.canvas.getRelativePoint(mouse);
 
@@ -396,7 +452,7 @@ class MouseObjectEventDataModifier extends ObjectEventDataModifier {
         return data;
     }
 
-    protected getIntersectionByObject(object:Object3D){
+    protected getIntersectionByObject(object:Object3D) {
         for (let intersection of this.intersections) {
             if (intersection.object == object) {
                 return intersection;
@@ -410,6 +466,10 @@ class MouseObjectEventDataModifier extends ObjectEventDataModifier {
         this.intersections = [];
 
         for (let object of objects) {
+            if (!object) {
+                continue;
+            }
+
             // Получаем пересечение
             let intersection = this.mouseEvents.intersectMouseRay(object);
 
@@ -426,7 +486,6 @@ class MouseObjectEventDataModifier extends ObjectEventDataModifier {
             .map((intersection:Intersection) => intersection.object);
     }
 }
-
 
 
 class EventManager {
@@ -584,6 +643,7 @@ class Renderer extends THREE.WebGLRenderer {
 // Сцена
 class Scene extends THREE.Scene {
     protected clickPlane:BigPlane;
+    protected listeners:ObjectListener[];
 
     constructor() {
         super();
@@ -596,21 +656,23 @@ class Scene extends THREE.Scene {
         let cupboard = new Cupboard();
         this.adds(cupboard, new Lights());
 
-        // Добавляем события:
-        let listeners:ObjectListener[] = [
+        let wallsListener = (new WallSectionsListeners(eventManager));
+
+        let doorsListener = (new DoorsListener(eventManager));
+        this.listeners = [
             new CupboardListener(cupboard, eventManager),
-            (new SectionsListener(eventManager)).setSections(cupboard.sections),
-            (new DoorsListener(eventManager)).setSections(cupboard.doors),
+            wallsListener.setSections(cupboard.sections),
+            doorsListener.setSections(cupboard.doors),
         ].concat();
 
-        // Получаем секции полок:
-        listeners = listeners.concat(
-            cupboard.sections
-                .getShelfSections()
-                .map((sections:ShelfSections) => (new SectionsListener(eventManager)).setSections(sections))
-        );
+        setTimeout(() => {
+            wallsListener.setAmount(Math.floor(Math.random() * 3) + 3);
+            doorsListener.setAmount(Math.floor(Math.random() * 3) + 3);
+        }, 5000);
 
-        listeners.forEach((events:ObjectListener) => events.listen(true));
+        // Получаем секции полок:
+
+        this.listeners.forEach((events:ObjectListener) => events.listen(true));
     }
 
     // Добавить все объекты
@@ -874,6 +936,7 @@ class SectionsListener extends ObjectListener {
         this.listen(false);
         this.sections = sections;
         this.sections.getAll().forEach(this.addSectionEvent);
+        this.listen(true);
         return this;
     }
 
@@ -888,6 +951,41 @@ class SectionsListener extends ObjectListener {
     listen(add:boolean = true):void {
         this.sectionsEvents.forEach((event:SectionListener) => event.listen(add));
     }
+
+    setAmount(amount:number) {
+        this.sections.setAmount(amount);
+        this.setSections(this.sections);
+    }
+}
+
+class WallSectionsListeners extends SectionsListener {
+    protected shelfListeners:SectionsListener[];
+
+    constructor(eventManager:EventManager) {
+        super(eventManager);
+    }
+
+
+    setSections(sections:Sections) {
+        this.shelfListeners = (sections as WallSections)
+            .getShelfSections()
+            .map((sections:ShelfSections) => (new SectionsListener(this.eventManager)).setSections(sections));
+        super.setSections(sections);
+        return this;
+    }
+
+    listen(add:boolean = true):void {
+        super.listen(add);
+        for (let listener of this.shelfListeners) {
+            listener.listen(add);
+        }
+    }
+
+    setAmount(amount:number) {
+        super.setAmount(amount);
+        let sections = this.sections as WallSections;
+        sections.getShelfSections()
+    }
 }
 
 /**
@@ -899,9 +997,11 @@ class DoorsListener extends SectionsListener {
 
     constructor(eventManager:EventManager) {
         super(eventManager);
+
         this.addSectionEvent = (door:DoorSection) => {
             // Создаём событие для секции:
-            let event = new DoorListener(this.eventManager, door, this.sections as DoorSections);
+            let doors = this.sections as DoorSections,
+                event = new DoorListener(this.eventManager, door, doors);
 
             // Добавляем его в массив:
             this.sectionsEvents.push(event);
