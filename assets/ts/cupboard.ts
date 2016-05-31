@@ -374,7 +374,7 @@ abstract class ObjectEventDataModifier {
 }
 
 class MouseObjectEventDataModifier extends ObjectEventDataModifier {
-    protected objectIntersections:ObjectIntersection[] = [];
+    protected intersections:Intersection[] = [];
 
     constructor(protected mouseEvents:MouseEventPasser) {
         super();
@@ -386,14 +386,7 @@ class MouseObjectEventDataModifier extends ObjectEventDataModifier {
             return data;
         }
 
-        let intersection:Intersection;
-        for (let objectIntersection of this.objectIntersections) {
-            if (objectIntersection.object == object) {
-                intersection = objectIntersection.intersection;
-                break;
-            }
-        }
-
+        let intersection = this.getIntersectionByObject(object);
         if (!intersection) {
             data.skip = true;
             return data;
@@ -403,31 +396,37 @@ class MouseObjectEventDataModifier extends ObjectEventDataModifier {
         return data;
     }
 
+    protected getIntersectionByObject(object:Object3D){
+        for (let intersection of this.intersections) {
+            if (intersection.object == object) {
+                return intersection;
+            }
+        }
+
+        return undefined;
+    }
+
     modifyAll(data:EventData, objects:THREE.Object3D[]):Object3D[] {
-        this.objectIntersections = [];
-        
+        this.intersections = [];
+
         for (let object of objects) {
             // Получаем пересечение
             let intersection = this.mouseEvents.intersectMouseRay(object);
 
+            // Пересечения нет или нет точки пересечения
             if (!intersection || !intersection.point) {
                 continue;
             }
 
-            this.objectIntersections.push(new ObjectIntersection(object, intersection));
+            this.intersections.push(intersection);
         }
 
-        return this.objectIntersections
-            .sort((a:ObjectIntersection, b:ObjectIntersection) => a.intersection.distance - b.intersection.distance)
-            .map((objectIntersection:ObjectIntersection) => objectIntersection.object);
+        return this.intersections
+            .sort((a:Intersection, b:Intersection) => a.distance - b.distance)
+            .map((intersection:Intersection) => intersection.object);
     }
 }
 
-class ObjectIntersection {
-    constructor(public object:THREE.Object3D,
-                public intersection:THREE.Intersection) {
-    }
-}
 
 
 class EventManager {
