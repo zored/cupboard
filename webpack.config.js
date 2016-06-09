@@ -3,7 +3,7 @@ var webpack = require('webpack');
 module.exports = {
     entry: './assets/ts/main.ts',
     output: {
-        filename: './web/js.js'
+        filename: './web/assets/js.js'
     },
     devtool: 'source-map',
     resolve: {
