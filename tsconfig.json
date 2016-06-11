@@ -3,8 +3,8 @@
     "module": "commonjs",
     "noImplicitAny": true,
     "removeComments": true,
-    "preserveConstEnums": false,
-    "sourceMap": true
+    "preserveConstEnums": true,
+    "sourceMap": false
   },
   "files": [
     "typings/main.d.ts",

@@ -5,7 +5,7 @@ module.exports = {
     output: {
         filename: './web/assets/js.js'
     },
-    devtool: 'source-map',
+    //devtool: 'source-map',
     resolve: {
         extensions: [
             '',

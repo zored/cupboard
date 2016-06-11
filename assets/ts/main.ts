@@ -1,19 +1,19 @@
-import cupboard = require('./cupboard');
-import $ = require('jquery');
-import THREE = require('three');
+import {Canvas, World} from './common';
+import * as $ from "jquery";
 
+// После загрузки документа:
 $(() => {
-    // Канвас для вывода
-    var $canvas = $('<canvas>').appendTo(document.body),
-        
-        $window = $(window),
-        
-        // Объект канваса
-        canvas = new cupboard.Canvas($window.innerWidth(), $window.innerHeight(), $canvas, $window),
+    // Окно:
+    let $window = $(window);
 
-        // Создаём мир шкафа
-        world = new cupboard.World(canvas);
+    // Создаём холст:
+    let canvas = new Canvas(
+        $window.innerWidth(),
+        $window.innerHeight(),
+        $('<canvas>').appendTo(document.body),
+        $window
+    );
 
-    // Запускаем мир
-    world.start();
+    // Запускаем мир:
+    (new World(canvas)).start();
 });
