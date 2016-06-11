@@ -151,7 +151,7 @@ export enum DoorState{
 
 /**
  * Обработчик нажатия мыши на двери.
- */нt
+ */
 export class DoorMouseUpHandler extends EventHandler {
     constructor(protected door:DoorSection,
                 protected doors:DoorSections,
