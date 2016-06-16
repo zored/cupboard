@@ -39,7 +39,7 @@ import {
 /**
  * Слушатель набора секций.
  */
-class SectionsListener extends ObjectListener {
+export class SectionsListener extends ObjectListener {
     /**
      * Слушатели для каждого из разделов.
      *
@@ -141,7 +141,7 @@ export class WallSectionsListener extends SectionsListener {
 /**
  * Слушатель коллекции дверей.
  */
-export class DoorsListener extends SectionsListener {
+export class DoorsSectionsListener extends SectionsListener {
     /**
      * Обработчик при отпускании кнопки на клавиатуре.
      */

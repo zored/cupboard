@@ -20,12 +20,14 @@ import {
 } from "three";
 
 import {
-    CupboardListener
+    CupboardListener,
+    SectionsListener
 } from "./listeners";
 
 import {
     Coordinate
 } from "./common";
+import {InputHandler, IntValue} from "./form";
 
 /**
  * Обработчик событий для шкафа.
@@ -158,8 +160,6 @@ export class WoodMouseToggleHandler extends EventHandler {
     handle(data:EventData):void {
         // Навели ли мы указатель или увели:
         let enter = (data.type == EventTypeEnum.MouseEnter);
-
-        console.log(enter ? 'entering' : 'leaving');
 
         // Наводим мышь на часть секции:
         this.wood.setHover(enter);
@@ -345,7 +345,53 @@ export class SectionPlaneMouseMoveHandler extends EventHandler {
         let size = mouseCoordinate - minEdge,
             relativeSize = size / directionSize;
 
-        this.sections.setRelativeSectionSizeComponent(this.section, relativeSize);
+        this.sections.setRelativeOneSizeComponent(this.section, relativeSize);
+    }
+}
+
+export class DoorsCoordinateLimitChecker {
+    constructor(protected sections:Sections) {
+
+    }
+
+    check(value:number, index:Coordinate, section:Section) {
+        value = Math.min(value, this.getMax(index, section));
+        value = Math.max(value, this.getMin(index, section));
+
+        return value;
+    }
+
+    private getMax(index:Coordinate, section:Section) {
+        let nextNext = this.getNextAfterNext(section);
+        if (!nextNext) {
+            return (this.sections.size.getComponent(index) + section.size.getComponent(index)) / 2;
+        }
+        return nextNext.position.getComponent(index) - nextNext.wood.scale.getComponent(index);
+    }
+
+    private getMin(index:Coordinate, section:Section) {
+        let prevPrev = this.getPreviousBeforePrevious(section);
+        if (!prevPrev) {
+            return -(this.sections.size.getComponent(index) + section.size.getComponent(index)) / 2;
+        }
+        return prevPrev.position.getComponent(index) + prevPrev.wood.scale.getComponent(index);
+    }
+
+    protected getNextAfterNext(section:Section):Section {
+        let next = this.sections.getNext(section);
+        if (!next) {
+            return null;
+        }
+        return this.sections.getNext(next);
+    }
+
+    protected getPreviousBeforePrevious(section:Section):Section {
+        let previous = this.sections.getPrevious(section);
+        if (!previous) {
+            return null;
+        }
+        return this.sections.getPrevious(previous);
+
     }
 }
 
@@ -353,9 +399,12 @@ export class SectionPlaneMouseMoveHandler extends EventHandler {
  * Обработчик движений мыши по плоскости для двери.
  */
 export class SlideDoorPlaneMouseMoveHandler extends EventHandler {
+    protected limitChecker:DoorsCoordinateLimitChecker;
+
     constructor(protected door:Section,
                 protected doors:Sections) {
         super();
+        this.limitChecker = new DoorsCoordinateLimitChecker(doors);
     }
 
     handle(data:MouseEventData) {
@@ -364,48 +413,10 @@ export class SlideDoorPlaneMouseMoveHandler extends EventHandler {
         // Координата X для двери
         let x = data.getPlaneIntersection().point.x;
 
-        // Задаём ограничения для размера:
-        let max = this.getMax();
-        x = Math.min(x, max);
-
-        let min = this.getMin();
-        x = Math.max(x, min);
+        x = this.limitChecker.check(x, Coordinate.X, this.door);
 
         // Устанавливаем координату:
         this.door.position.setX(x);
-    }
-
-    protected getMax() {
-        let door = this.getNextAfterNext();
-        if (!door) {
-            return this.doors.getDirectionSize() / 2;
-        }
-        return door.position.x - door.wood.scale.x;
-    }
-
-    protected getMin() {
-        let door = this.getPreviousBeforePrevious();
-        if (!door) {
-            return -this.doors.getDirectionSize() / 2;
-        }
-        return door.position.x + door.wood.scale.x;
-    }
-
-    protected getNextAfterNext() {
-        let next = this.doors.getNext(this.door);
-        if (!next) {
-            return null;
-        }
-        return this.doors.getNext(next);
-    }
-
-    protected getPreviousBeforePrevious() {
-        let previous = this.doors.getPrevious(this.door);
-        if (!previous) {
-            return null;
-        }
-        return this.doors.getPrevious(previous);
-
     }
 }
 
@@ -472,5 +483,31 @@ export class CupboardKeyHandler extends CupboardHandler {
 
     private stopMove() {
         clearInterval(this.moveInterval);
+    }
+}
+
+/**
+ * Обработчик для установки размера шкафа из поля ввода.
+ */
+export class CupboardSizeInputHandler extends InputHandler{
+    constructor(protected cupboard:Cupboard, protected index:Coordinate) {
+        super();
+    }
+
+    public handle(value:IntValue) {
+        this.cupboard.setSizeComponent(this.index, value.get());
+    }
+}
+
+/**
+ * Обработчик для установки размера шкафа из поля ввода.
+ */
+export class SectionAmountInputHandler extends InputHandler{
+    constructor(protected sectionsListener:SectionsListener) {
+        super();
+    }
+
+    public handle(value:IntValue) {
+        this.sectionsListener.setAmount(value.get());
     }
 }

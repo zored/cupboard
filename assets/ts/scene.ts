@@ -29,14 +29,15 @@ import {
 
 import {
     WallSectionsListener,
-    DoorsListener,
+    DoorsSectionsListener,
     CupboardListener
 } from "./listeners";
 
 import {
     DoorState,
-    DoorDirection
+    DoorDirection, DoorsCoordinateLimitChecker
 } from "./handlers";
+import {SectionsAmountInput} from "./form";
 
 /**
  * Сцена.
@@ -44,18 +45,19 @@ import {
 export class Scene extends ThreeScene {
     protected clickPlane:BigPlane;
     protected listeners:ObjectListener[];
+    public cupboard:Cupboard;
 
     constructor() {
         super();
         this.clickPlane = new BigPlane();
-        this.add(this.clickPlane);
     }
 
     // Заполнить сцену объектами
     fill(eventManager:EventManager) {
-        let cupboard = new Cupboard();
-        this.adds(cupboard, new Lights());
-        this.setListeners(eventManager, cupboard);
+        this.cupboard = new Cupboard();
+        this.cupboard.add(this.clickPlane);
+        this.adds(this.cupboard, new Lights());
+        this.setListeners(eventManager, this.cupboard);
     }
 
     /**
@@ -67,7 +69,7 @@ export class Scene extends ThreeScene {
     protected setListeners(eventManager:EventManager, cupboard:Cupboard) {
         // Слушатели дверей и стен:
         let walls = (new WallSectionsListener(eventManager)),
-            doors = (new DoorsListener(eventManager));
+            doors = (new DoorsSectionsListener(eventManager));
 
         // Устанавливаем массив слушателей:
         this.listeners = [
@@ -78,6 +80,9 @@ export class Scene extends ThreeScene {
 
         // Получаем секции полок:
         this.listeners.forEach((events:ObjectListener) => events.listen(true));
+
+        (new SectionsAmountInput('секций со стенами', walls)).setValue(cupboard.sections.getAmount());
+        // (new SectionsAmountInput('дверей', doors)).setValue(cupboard.doors.getAmount());
     }
 
     // Добавить все объекты
@@ -269,7 +274,7 @@ class WoodMaterial extends MeshPhongMaterial {
  */
 export class Section extends Object3D implements Resizable {
     public wood:Wood = null;
-    protected size:Vector3 = new Vector3();
+    public size:Vector3 = new Vector3();
     public resizing:boolean = false;
 
     constructor(protected thickness:number,
@@ -424,16 +429,35 @@ class WallSection extends Section {
  * @see Section
  */
 export class Sections extends Object3D implements Resizable {
-    protected sections:Section[] = [];
+    /**
+     * Массив секций.
+     *
+     * @type {Array}
+     */
+    protected all:Section[] = [];
+
+    /**
+     * Изменяет ли размер одна из секций.
+     *
+     * @type {boolean}
+     */
     public oneResizing:boolean = false;
 
+    /**
+     * Обновляет геометрию секций.
+     */
+    protected geometryUpdater:SectionsGeometryUpdater;
+
     constructor(public direction:Coordinate,
-                protected size:Vector3,
+                public size:Vector3,
                 public thickness:number,
                 protected amount = 3,
                 public minSize = 20,
-                protected deleteLastWood = true) {
+                protected hideLastWood = true) {
         super();
+
+        // Объект для обновления геометрии.
+        this.geometryUpdater = new SectionsGeometryUpdater(this);
 
         // Устанавливаем изначальное количество секций:
         this.setAmount(amount);
@@ -445,7 +469,7 @@ export class Sections extends Object3D implements Resizable {
      * @returns {Section[]}
      */
     getAll():Section[] {
-        return this.sections;
+        return this.all;
     }
 
     /**
@@ -454,37 +478,52 @@ export class Sections extends Object3D implements Resizable {
      * @param amount
      */
     setAmount(amount:number) {
+        amount = Math.max(amount, 2);
+        amount = Math.min(amount, 10);
         this.amount = amount;
 
         // Удаляем существующие секции:
         this.clear();
 
-        // Размер всех секций:
-        let sectionsSize:number = this.getDirectionSize();
+        // Создать N секций.
+        this.create();
 
-        // Размер одной секции:
-        let size:number = sectionsSize / amount;
+        // Обновляем геометрию секций:
+        this.updateGeometry();
+    }
 
-        // Относительный размер секции:
-        let relativeSize:number = size / sectionsSize;
-
+    /**
+     * Создать секции
+     */
+    protected create():Sections {
         // По количеству секций:
-        for (let i = 0; i < amount; i++) {
+        for (let i = 0; i < this.amount; i++) {
             // Создаём секцию с заданным относительным размером:
-            let section = this.createSection(relativeSize);
+            let section = this.createOne();
 
             // Добавляем сецию в массив секций и в объект:
-            this.sections.push(section);
+            this.all.push(section);
             this.add(section);
         }
 
-        // Скрываем стенку / полку у последней секции, если это нужно
-        if (this.deleteLastWood) {
-            this.sections[amount - 1].hideWall();
+        // Не скрываем последнюю доску.
+        if (!this.hideLastWood) {
+            return this;
         }
 
-        // Обновляем геометрию секций:
-        this.updateSectionsGeometry();
+        // Скрываем последнюю доску.
+        this.all[this.amount - 1].hideWall();
+
+        return this;
+    }
+
+    /**
+     * Получить относительный размер.
+     *
+     * @returns {number}
+     */
+    protected getOneRelativeSize():number {
+        return 1 / this.amount;
     }
 
     /**
@@ -493,8 +532,8 @@ export class Sections extends Object3D implements Resizable {
      * @param relativeSize
      * @returns {Section}
      */
-    protected createSection(relativeSize:number) {
-        return new Section(this.thickness, relativeSize, this.direction);
+    protected createOne() {
+        return new Section(this.thickness, this.getOneRelativeSize(), this.direction);
     }
 
     /**
@@ -518,30 +557,28 @@ export class Sections extends Object3D implements Resizable {
      * @param checkNext
      * @returns {Sections}
      */
-    setRelativeSectionSizeComponent(section:Section, size:number, checkNext:boolean = true):void {
+    setRelativeOneSizeComponent(section:Section, size:number, checkNext:boolean = true):void {
         // Изменение относительного размера:
-        let deltaSize = size - section.relativeSize;
+        let delta = size - section.relativeSize;
 
         // Устанавливаем относительный размер:
         section.relativeSize = size;
 
-        // Если не надо проверять следующий элемент, выходим:
+        // Если не надо проверять следующую секцию, выходим:
         if (!checkNext) {
-            this.updateSectionsGeometry();
+            this.updateGeometry();
             return;
         }
 
-
+        // Следуюшщая секция:
         let next = this.getNext(section);
-        // Следующего нет:
         if (!next) {
-            this.updateSectionsGeometry();
+            this.updateGeometry();
             return;
         }
 
-        // Устанавливаем размер следующему элементу:
-        this.setRelativeSectionSizeComponent(next, next.relativeSize - deltaSize, false);
-
+        // Устанавливаем размер следующей секции:
+        this.setRelativeOneSizeComponent(next, next.relativeSize - delta, false);
     }
 
     /**
@@ -552,7 +589,7 @@ export class Sections extends Object3D implements Resizable {
      */
     setSizeComponent(index:Coordinate, size:number) {
         this.size.setComponent(index, size);
-        this.updateSectionsGeometry();
+        this.updateGeometry();
     }
 
     /**
@@ -565,38 +602,12 @@ export class Sections extends Object3D implements Resizable {
     }
 
     /**
-     * Обновить положения и размеры секций по их относительным размерам.
+     * Обновить геометрию разделов.
      *
      * @returns {Sections}
      */
-    updateSectionsGeometry() {
-        // Размер секций по направлению:
-        let allDirectionSize = this.getDirectionSize() - this.thickness * 2;
-
-        // Положение секции:
-        let position = -allDirectionSize / 2;
-
-        for (let section of this.sections) {
-            // Размер секции по направлению
-            let directionSize:number = allDirectionSize * section.relativeSize;
-
-            // Отодвигаем координату центра секции на половину размера.
-            position += directionSize / 2;
-
-            // Размер секции
-            let sectionSize = this.size.clone();
-
-            // Устанавливаем размер секции по направлению
-            sectionSize.setComponent(this.direction, directionSize);
-
-            // Устанавливаем размер и положение секции
-            section
-                .setSize(sectionSize)
-                .setPositionComponent(this.direction, position);
-
-            position += directionSize / 2;
-        }
-        return this;
+    updateGeometry() {
+        this.geometryUpdater.update();
     }
 
     /**
@@ -606,16 +617,16 @@ export class Sections extends Object3D implements Resizable {
      */
     protected clear() {
         // Удаляем каждую секцию из объекта:
-        this.sections.forEach((section:Section) => this.remove(section));
+        this.all.forEach((section:Section) => this.remove(section));
 
         // Очищаем массив с секциями:
-        this.sections = [];
+        this.all = [];
 
         return this;
     }
 
     /**
-     * Получить предыдущую секцию.
+     * Получить секцию до указанной.
      *
      * @param section
      * @returns {Section}
@@ -625,7 +636,7 @@ export class Sections extends Object3D implements Resizable {
     }
 
     /**
-     * Получить следующую секцию.
+     * Получить секцию после указанной.
      *
      * @param section
      * @returns {Section}
@@ -635,22 +646,137 @@ export class Sections extends Object3D implements Resizable {
     }
 
     /**
-     * Получить секцию рядом с указанной
+     * Получить секцию рядом с указанной.
      *
      * @param section
      * @param deltaIndex
      * @returns {Section}
      */
     protected getNear(section:Section, deltaIndex:number):Section {
-        let index:number = this.sections.indexOf(section);
+        let index:number = this.all.indexOf(section);
         if (index == -1) {
             return null;
         }
         let nearIndex:number = index + deltaIndex;
-        return this.sections[nearIndex] || null;
+        return this.all[nearIndex] || null;
+    }
+
+    getAmount() {
+        return this.amount;
     }
 }
 
+/**
+ * Обновляет размеры и положение секций.
+ */
+class SectionsGeometryUpdater {
+    /**
+     * Размер всех секций.
+     */
+    private size:number;
+
+    /**
+     * Положение следующей секции.
+     */
+    private nextPosition:number;
+
+    /**
+     * Размер текущей секкции.
+     */
+    private oneSize:number;
+
+    /**
+     * Текущая секция.
+     */
+    protected section:Section;
+
+    constructor(protected sections:Sections) {
+    }
+
+    /**
+     * Обновить положение секции.
+     *
+     * @returns {SectionsGeometryUpdater}
+     */
+    update() {
+        // Размер секций по направлению:
+        this.size = this.sections.getDirectionSize() - this.sections.thickness * 2;
+
+        // Положение секции:
+        this.nextPosition = -this.size / 2;
+
+        // Для каждой секции обновляем геометрию:
+        this.sections.getAll().forEach((section:Section) => this.updateOneGeometry(section));
+
+        return this;
+    }
+
+    /**
+     * Обновить геометрию секции.
+     *
+     * @param section
+     *
+     * @returns {SectionsGeometryUpdater}
+     */
+    protected updateOneGeometry(section:Section) {
+        this.section = section;
+
+        // Размер секции по направлению
+        this.oneSize = this.size * section.relativeSize;
+
+        this.updateOneSize().updateOnePosition();
+    }
+
+    /**
+     * Обновляем размер секции.
+     *
+     * @returns {SectionsGeometryUpdater}
+     */
+    protected updateOneSize():SectionsGeometryUpdater {
+        // Размер секции
+        let size = this.sections.size.clone();
+
+        // Устанавливаем размер секции по направлению
+        size.setComponent(this.sections.direction, this.oneSize);
+
+        // Устанавливаем размер:
+        this.section.setSize(size);
+
+        return this;
+    }
+
+    /**
+     * Обновляем положение секции.
+     *
+     * @returns {SectionsGeometryUpdater}
+     */
+    protected updateOnePosition():SectionsGeometryUpdater {
+        // Сдвигаем на полразмера
+        let position = this.nextPosition + this.oneSize / 2;
+
+        // Устанавливаем размер и положение секции
+        this.section.setPositionComponent(this.sections.direction, position);
+
+        // Устанавливаем положение для следующей секции.
+        this.nextPosition += this.oneSize;
+
+        return this;
+    }
+}
+
+class DoorSectionsGeometryUpdater extends SectionsGeometryUpdater {
+    private limitChecker:DoorsCoordinateLimitChecker;
+
+    constructor(doors:Sections) {
+        super(doors);
+        this.limitChecker = new DoorsCoordinateLimitChecker(doors);
+    }
+
+    protected updateOnePosition():DoorSectionsGeometryUpdater {
+        this.section.position.x = this.limitChecker.check(this.section.position.x, Coordinate.X, this.section);
+        return this;
+    }
+}
 /**
  * Секции с полками.
  */
@@ -681,17 +807,19 @@ export class DoorSections extends Sections {
 
     constructor(size:Vector3, thickness:number, amount:number = 3, minSize:number = 20) {
         super(Coordinate.X, size, thickness, amount, minSize, false);
+        this.geometryUpdater = new DoorSectionsGeometryUpdater(this);
     }
 
-    protected createSection(relativeSize:number):Section {
-        let door = new SlideDoorSection(this.thickness, relativeSize, Math.round(Math.random()));
+    /** @inheritDoc */
+    protected createOne():Section {
+        let door = new SlideDoorSection(this.thickness, this.getOneRelativeSize(), Math.round(Math.random()));
         if (DoorSections.lastForward) {
             door.position.setZ(door.position.z - this.thickness);
         }
         DoorSections.lastForward = !DoorSections.lastForward;
         return door;
     }
-    
+
     toggle() {
         this.visible = !this.visible;
     }
@@ -716,7 +844,8 @@ export class WallSections extends Sections {
     }
 
     /** @inheritDoc */
-    protected createSection(relativeSize:number) {
+    protected createOne() {
+        let relativeSize = this.getOneRelativeSize();
         // Создаём секцию и в ней задаём секции с полками:
         let section = new WallSection(this.thickness, relativeSize),
             shelfWidth = relativeSize * this.getDirectionSize(),
@@ -962,7 +1091,7 @@ class Walls extends Object3D implements Resizable {
         return this;
     }
 
-    protected getHalf(size:number):number{
+    protected getHalf(size:number):number {
         return (size - this.thickness) / 2;
     }
 

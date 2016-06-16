@@ -16,6 +16,7 @@ import {
 import {
     Scene,
 } from "./scene";
+import {CupboardSizeInput} from "./form";
 
 /**
  * Изменяет свой размер по всем координатам.
@@ -58,6 +59,12 @@ export class World {
 
         // Заполняем сцену объектами
         this.scene.fill(this.eventManager);
+
+        for(var i=0; i<3; i++) {
+            let size = this.scene.cupboard.size.getComponent(i);
+            (new CupboardSizeInput(this.scene.cupboard, i)).setValue(size);
+        }
+        
     }
 
     // Каждый фрейм запускать рендер
@@ -124,6 +131,10 @@ export class Canvas {
 
         return point;
     }
+}
+
+export class Form{
+
 }
 
 /**
