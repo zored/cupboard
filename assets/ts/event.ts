@@ -21,6 +21,11 @@ import {
  * Обработчик событий.
  */
 export abstract class EventHandler {
+    /**
+     * Запустить обработчик.
+     *
+     * @param data
+     */
     abstract handle(data:EventData):void;
 }
 

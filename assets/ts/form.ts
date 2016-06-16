@@ -1,5 +1,5 @@
 import * as $ from "jquery";
-import {CupboardSizeInputHandler, SectionAmountInputHandler} from "./handlers";
+import {ObjectSizeInputHandler, SectionAmountInputHandler} from "./handlers";
 import {Cupboard} from "./scene";
 import {Coordinate} from "./common";
 import {SectionsListener} from "./listeners";
@@ -85,15 +85,20 @@ export abstract class InputHandler {
     public abstract handle(value:InputValue):void;
 }
 
-
+/**
+ * Поле для ввода размера шкафа.
+ */
 export class CupboardSizeInput extends NumberInput{
     constructor(cupboard:Cupboard, index:Coordinate) {
         let names = ['Ширина', 'Высота', 'Глубина'];
         super(names[index]);
-        this.handler = new CupboardSizeInputHandler(cupboard, index);
+        this.handler = new ObjectSizeInputHandler(cupboard, index);
     }
 }
 
+/**
+ * Поле для ввода количества секций.
+ */
 export class SectionsAmountInput extends NumberInput{
     constructor(prefix:string, sectionsListener:SectionsListener) {
         super('Количество ' + prefix);
@@ -101,21 +106,38 @@ export class SectionsAmountInput extends NumberInput{
     }
 }
 
+/**
+ * Значение поля ввода.
+ */
 export class InputValue{
     constructor(protected value:any = null) {
         this.set(value);
     }
-    
+
+    /**
+     * Установить значение.
+     *
+     * @param value
+     * @returns {InputValue}
+     */
     set(value:any){
         this.value = value;
         return this;
     }
-    
+
+    /**
+     * Получить значение.
+     *
+     * @returns {any}
+     */
     get():any{
         return this.value;
     }
 }
 
+/**
+ * Целочисленное значение.
+ */
 export class IntValue extends InputValue{
     set(value:any){
         value = parseInt(value);

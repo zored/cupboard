@@ -25,9 +25,10 @@ import {
 } from "./listeners";
 
 import {
-    Coordinate
+    Coordinate, Resizable
 } from "./common";
 import {InputHandler, IntValue} from "./form";
+import Object3D = THREE.Object3D;
 
 /**
  * Обработчик событий для шкафа.
@@ -427,6 +428,7 @@ export class CupboardKeyHandler extends CupboardHandler {
     protected rotateInterval:number;
     protected moveInterval:number;
 
+    /** @inheritDoc */
     handle(data:KeyBoardEventData):void {
         data.type == EventTypeEnum.KeyDown
             ? this.down(data)
@@ -487,15 +489,16 @@ export class CupboardKeyHandler extends CupboardHandler {
 }
 
 /**
- * Обработчик для установки размера шкафа из поля ввода.
+ * Обработчик для установки размера объекта по указанной координатеиз поля ввода.
  */
-export class CupboardSizeInputHandler extends InputHandler{
-    constructor(protected cupboard:Cupboard, protected index:Coordinate) {
+export class ObjectSizeInputHandler extends InputHandler{
+    constructor(protected object:Object3D, protected index:Coordinate) {
         super();
     }
 
+    /** @inheritDoc */
     public handle(value:IntValue) {
-        this.cupboard.setSizeComponent(this.index, value.get());
+        (this.object as any as Resizable).setSizeComponent(this.index, value.get());
     }
 }
 
@@ -507,6 +510,7 @@ export class SectionAmountInputHandler extends InputHandler{
         super();
     }
 
+    /** @inheritDoc */
     public handle(value:IntValue) {
         this.sectionsListener.setAmount(value.get());
     }

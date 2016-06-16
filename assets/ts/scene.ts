@@ -82,7 +82,7 @@ export class Scene extends ThreeScene {
         this.listeners.forEach((events:ObjectListener) => events.listen(true));
 
         (new SectionsAmountInput('секций со стенами', walls)).setValue(cupboard.sections.getAmount());
-        // (new SectionsAmountInput('дверей', doors)).setValue(cupboard.doors.getAmount());
+        (new SectionsAmountInput('дверей', doors)).setValue(cupboard.doors.getAmount());
     }
 
     // Добавить все объекты
@@ -381,7 +381,7 @@ export class OpenDoorSection extends Section {
  * Секция с  дверью.
  */
 export class SlideDoorSection extends Section {
-    constructor(thickness:number, relativeSize:number, public openType:DoorDirection) {
+    constructor(thickness:number, relativeSize:number) {
         super(thickness, relativeSize, Coordinate.X);
         this.setSizeComponent(Coordinate.Z, thickness);
     }
@@ -453,14 +453,20 @@ export class Sections extends Object3D implements Resizable {
                 public thickness:number,
                 protected amount = 3,
                 public minSize = 20,
-                protected hideLastWood = true) {
+                protected hideLastWood = true,
+                protected minAmount = 2,
+                protected maxAmount = 30) {
         super();
 
         // Объект для обновления геометрии.
-        this.geometryUpdater = new SectionsGeometryUpdater(this);
+        this.geometryUpdater = this.createGeometryUpdater();
 
         // Устанавливаем изначальное количество секций:
         this.setAmount(amount);
+    }
+
+    protected createGeometryUpdater():SectionsGeometryUpdater {
+        return new SectionsGeometryUpdater(this);
     }
 
     /**
@@ -478,9 +484,7 @@ export class Sections extends Object3D implements Resizable {
      * @param amount
      */
     setAmount(amount:number) {
-        amount = Math.max(amount, 2);
-        amount = Math.min(amount, 10);
-        this.amount = amount;
+        this.amount = this.getLimitedAmount(amount);
 
         // Удаляем существующие секции:
         this.clear();
@@ -490,6 +494,18 @@ export class Sections extends Object3D implements Resizable {
 
         // Обновляем геометрию секций:
         this.updateGeometry();
+    }
+
+    /**
+     * Получить ограниченное количество секций.
+     *
+     * @param amount
+     * @returns {number}
+     */
+    protected getLimitedAmount(amount:number) {
+        amount = Math.max(amount, this.minAmount);
+        amount = Math.min(amount, this.maxAmount);
+        return amount;
     }
 
     /**
@@ -773,7 +789,12 @@ class DoorSectionsGeometryUpdater extends SectionsGeometryUpdater {
     }
 
     protected updateOnePosition():DoorSectionsGeometryUpdater {
-        this.section.position.x = this.limitChecker.check(this.section.position.x, Coordinate.X, this.section);
+        let position = this.section.position;
+        if (!position.x) {
+            super.updateOnePosition();
+            return this;
+        }
+        position.x = this.limitChecker.check(position.x, Coordinate.X, this.section);
         return this;
     }
 }
@@ -800,26 +821,39 @@ export class ShelfSections extends Sections {
  */
 export class DoorSections extends Sections {
     /**
-     * Пcследняя дверь была спереди.
+     * Последняя дверь была спереди.
+     *
      * @type {boolean}
      */
     protected static lastForward = false;
 
     constructor(size:Vector3, thickness:number, amount:number = 3, minSize:number = 20) {
         super(Coordinate.X, size, thickness, amount, minSize, false);
-        this.geometryUpdater = new DoorSectionsGeometryUpdater(this);
+    }
+
+
+    protected createGeometryUpdater():SectionsGeometryUpdater {
+        return new DoorSectionsGeometryUpdater(this);
     }
 
     /** @inheritDoc */
     protected createOne():Section {
-        let door = new SlideDoorSection(this.thickness, this.getOneRelativeSize(), Math.round(Math.random()));
+        // Создаём дверь:
+        let door = new SlideDoorSection(this.thickness, this.getOneRelativeSize());
+
+        // Сдвигаем дверь чуть вперёд, чтобы она не пересекалась с соседними:
         if (DoorSections.lastForward) {
             door.position.setZ(door.position.z - this.thickness);
         }
         DoorSections.lastForward = !DoorSections.lastForward;
+
+        // Возвращаем двери:
         return door;
     }
 
+    /**
+     * Показать / скрыть двери.
+     */
     toggle() {
         this.visible = !this.visible;
     }
