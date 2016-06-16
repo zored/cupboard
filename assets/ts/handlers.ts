@@ -1,7 +1,7 @@
 import {
-    EventData, 
-    MouseEventData, 
-    KeyBoardEventData, 
+    EventData,
+    MouseEventData,
+    KeyBoardEventData,
     EventHandler,
     EventTypeEnum,
     KeyCodeEnum
@@ -11,8 +11,8 @@ import {
     Cupboard,
     Section,
     Sections,
-    DoorSection,
-    DoorSections
+    DoorSections,
+    Wood, OpenDoorSection
 } from "./scene";
 
 import {
@@ -23,11 +23,16 @@ import {
     CupboardListener
 } from "./listeners";
 
+import {
+    Coordinate
+} from "./common";
+
 /**
  * Обработчик событий для шкафа.
  */
 abstract class CupboardHandler extends EventHandler {
-    constructor(protected mouseEvents:CupboardListener, protected cupboard:Cupboard) {
+    constructor(protected listener:CupboardListener,
+                protected cupboard:Cupboard) {
         super();
     }
 }
@@ -37,41 +42,51 @@ abstract class CupboardHandler extends EventHandler {
  */
 export class CupboardPlaneMouseMoveHandler extends CupboardHandler {
     handle(data:MouseEventData) {
+        // Получить точку пересечения с плоскостью:
         let point = data.getPlaneIntersection().point;
 
+        // Для каждой координаты измнить размер.
         for (let index = 0; index < 3; index++) {
-            this.changeComponent(index, point);
+            this.changeSizeComponent(index, point);
         }
     }
 
-    protected changeComponent(index:number, point:Vector3) {
-        if (!this.mouseEvents.changingSize.getComponent(index)) {
+    /**
+     * Изменить размер.
+     *
+     * @param index
+     * @param point
+     */
+    protected changeSizeComponent(index:Coordinate, point:Vector3) {
+        // Если у слушателя не установлено, что данный размер изменяется - выходим.
+        if (!this.listener.changingSize.getComponent(index)) {
             return;
         }
 
-        // Получаем размер шкафа по данному направлению:
-        let previousSize = this.mouseEvents.previousSize.getComponent(index);
+        // Получаем предыдущий размер шкафа по оси:
+        let previousAxisSize = this.listener.previousSize.getComponent(index);
 
         // Какой компонент координаты мыши брать:
         let mouseIndex = index;
 
-        // При изменении глубины меняем по изменению Z:
-        if (index == 2) {
-            mouseIndex = 1;
+        // Если меняем глубину - значение берется по оси Y:
+        if (index == Coordinate.Z) {
+            mouseIndex = Coordinate.Y;
         }
 
-        // Координата на плоскости:
-        let planeCoordinate = point.getComponent(mouseIndex);
+        // Координата по оси на плоскости:
+        let planeAxisCoordinate = point.getComponent(mouseIndex);
 
-        // Предыдущая координата на плоскости:
-        let initialPlaneCoordinate = this.mouseEvents.resizeStartPoint.getComponent(mouseIndex);
+        // Предыдущая координата по оси на плоскости:
+        let initialPlaneCoordinate = this.listener.resizeStartPoint.getComponent(mouseIndex);
 
-        // Изменение координаты:
-        let deltaCoordinate = planeCoordinate - initialPlaneCoordinate;
+        // Изменение координаты по оси:
+        let deltaCoordinate = planeAxisCoordinate - initialPlaneCoordinate;
 
-        // Размер шкафа: предыдущий размер + координата
-        let size = previousSize + deltaCoordinate;
+        // Размер по оси для шкафа: предыдущий размер + координата
+        let size = previousAxisSize + deltaCoordinate;
 
+        // Устанавливаем размер шкафа:
         this.cupboard.setSizeComponent(index, size);
     }
 }
@@ -81,7 +96,7 @@ export class CupboardPlaneMouseMoveHandler extends CupboardHandler {
  */
 export class CupboardMouseUpHandler extends CupboardHandler {
     handle(data:EventData) {
-        this.mouseEvents.changingSize.set(0, 0, 0);
+        this.listener.changingSize.set(0, 0, 0);
     }
 }
 
@@ -90,8 +105,8 @@ export class CupboardMouseUpHandler extends CupboardHandler {
  */
 export class CupboardPlaneMouseDownHandler extends CupboardHandler {
     handle(data:MouseEventData) {
-        this.mouseEvents.resizeStartPoint = data.getPlaneIntersection().point;
-        this.mouseEvents.previousSize = this.cupboard.size.clone();
+        this.listener.resizeStartPoint = data.getPlaneIntersection().point;
+        this.listener.previousSize = this.cupboard.size.clone();
     }
 }
 
@@ -104,7 +119,7 @@ export class WallMouseDownHandler extends CupboardHandler {
     }
 
     handle(data:EventData) {
-        this.mouseEvents.changingSize.setComponent(this.index, 1);
+        this.listener.changingSize.setComponent(this.index, 1);
     }
 }
 
@@ -132,6 +147,26 @@ export class SectionWallMouseHandler extends EventHandler {
 }
 
 /**
+ * Обработчик наведения мыши / снятия наведения
+ */
+export class WoodMouseToggleHandler extends EventHandler {
+    constructor(public wood:Wood) {
+        super();
+    }
+
+    /** @inheritDoc */
+    handle(data:EventData):void {
+        // Навели ли мы указатель или увели:
+        let enter = (data.type == EventTypeEnum.MouseEnter);
+
+        console.log(enter ? 'entering' : 'leaving');
+
+        // Наводим мышь на часть секции:
+        this.wood.setHover(enter);
+    }
+}
+
+/**
  * Куда открывается дверь.
  */
 export enum DoorDirection {
@@ -152,8 +187,8 @@ export enum DoorState{
 /**
  * Обработчик нажатия мыши на двери.
  */
-export class DoorMouseUpHandler extends EventHandler {
-    constructor(protected door:DoorSection,
+export class OpenDoorMouseUpHandler extends EventHandler {
+    constructor(protected door:OpenDoorSection,
                 protected doors:DoorSections,
                 public eventType:EventTypeEnum) {
         super();
@@ -311,6 +346,66 @@ export class SectionPlaneMouseMoveHandler extends EventHandler {
             relativeSize = size / directionSize;
 
         this.sections.setRelativeSectionSizeComponent(this.section, relativeSize);
+    }
+}
+
+/**
+ * Обработчик движений мыши по плоскости для двери.
+ */
+export class SlideDoorPlaneMouseMoveHandler extends EventHandler {
+    constructor(protected door:Section,
+                protected doors:Sections) {
+        super();
+    }
+
+    handle(data:MouseEventData) {
+        if (!this.door.resizing) return;
+
+        // Координата X для двери
+        let x = data.getPlaneIntersection().point.x;
+
+        // Задаём ограничения для размера:
+        let max = this.getMax();
+        x = Math.min(x, max);
+
+        let min = this.getMin();
+        x = Math.max(x, min);
+
+        // Устанавливаем координату:
+        this.door.position.setX(x);
+    }
+
+    protected getMax() {
+        let door = this.getNextAfterNext();
+        if (!door) {
+            return this.doors.getDirectionSize() / 2;
+        }
+        return door.position.x - door.wood.scale.x;
+    }
+
+    protected getMin() {
+        let door = this.getPreviousBeforePrevious();
+        if (!door) {
+            return -this.doors.getDirectionSize() / 2;
+        }
+        return door.position.x + door.wood.scale.x;
+    }
+
+    protected getNextAfterNext() {
+        let next = this.doors.getNext(this.door);
+        if (!next) {
+            return null;
+        }
+        return this.doors.getNext(next);
+    }
+
+    protected getPreviousBeforePrevious() {
+        let previous = this.doors.getPrevious(this.door);
+        if (!previous) {
+            return null;
+        }
+        return this.doors.getPrevious(previous);
+
     }
 }
 

@@ -8,8 +8,8 @@ $(() => {
 
     // Создаём холст:
     let canvas = new Canvas(
-        $window.innerWidth(),
-        $window.innerHeight(),
+        800,
+        600,
         $('<canvas>').appendTo(document.body),
         $window
     );

@@ -7,7 +7,7 @@ import {
     DoorKeyUpHandler,
     SectionWallMouseHandler,
     SectionPlaneMouseMoveHandler,
-    DoorMouseUpHandler
+    OpenDoorMouseUpHandler, WoodMouseToggleHandler, SlideDoorPlaneMouseMoveHandler
 } from "./handlers";
 
 import {
@@ -21,8 +21,9 @@ import {
     WallSections,
     ShelfSections,
     DoorSections,
-    DoorSection,
-    Wood
+    Wood,
+    SlideDoorSection,
+    OpenDoorSection,
 } from "./scene";
 
 import {
@@ -150,10 +151,10 @@ export class DoorsListener extends SectionsListener {
         super(eventManager);
 
         // Заменяем событие добавления секции:
-        this.addSectionEvent = (door:DoorSection) => {
+        this.addSectionEvent = (door:SlideDoorSection) => {
             // Создаём событие для секции:
             let doors = this.sections as DoorSections,
-                event = new DoorListener(this.eventManager, door, doors);
+                event = new SlideDoorListener(this.eventManager, door, doors);
 
             // Добавляем его в массив:
             this.listeners.push(event);
@@ -182,6 +183,7 @@ class SectionListener extends ObjectListener {
     protected onWallDown:SectionWallMouseHandler;
     protected onPlaneUp:SectionWallMouseHandler;
     protected onPlaneMove:SectionPlaneMouseMoveHandler;
+    protected onWoodHover:WoodMouseToggleHandler;
 
     constructor(protected eventManager:EventManager,
                 protected section:Section,
@@ -193,6 +195,7 @@ class SectionListener extends ObjectListener {
 
         // Задаём обработчики событий.
         this.onWallDown = new SectionWallMouseHandler(section, sections, EventTypeEnum.MouseDown);
+        this.onWoodHover = new WoodMouseToggleHandler(section.wood);
         this.onPlaneUp = new SectionWallMouseHandler(section, sections, EventTypeEnum.MouseUp);
         this.onPlaneMove = new SectionPlaneMouseMoveHandler(section, sections);
     }
@@ -213,6 +216,8 @@ class SectionListener extends ObjectListener {
         this.eventManager
             .toggle(this.onWallDown.eventType, this.section.wood, this.onWallDown, add)
             .toggle(this.onPlaneUp.eventType, this.eventManager.mouse.plane, this.onPlaneUp, add)
+            .toggle(EventTypeEnum.MouseEnter, this.section.wood, this.onWoodHover, add)
+            .toggle(EventTypeEnum.MouseLeave, this.section.wood, this.onWoodHover, add)
             .toggle(EventTypeEnum.MouseMove, this.eventManager.mouse.plane, this.onPlaneMove, add);
     }
 }
@@ -220,22 +225,42 @@ class SectionListener extends ObjectListener {
 /**
  * Слушатель двери.
  */
-class DoorListener extends SectionListener {
+class OpenDoorListener extends SectionListener {
 
-    protected onWoodUp:DoorMouseUpHandler;
+    protected onWoodUp:OpenDoorMouseUpHandler;
 
     constructor(protected eventManager:EventManager,
-                protected door:DoorSection,
+                protected door:OpenDoorSection,
                 protected doors:DoorSections) {
         super(eventManager, door, doors);
 
         // Задаём обработчики событий.
-        this.onWoodUp = new DoorMouseUpHandler(door, doors, EventTypeEnum.MouseDown);
+        this.onWoodUp = new OpenDoorMouseUpHandler(door, doors, EventTypeEnum.MouseDown);
     }
 
 
     listen(add:boolean = true) {
         this.eventManager.toggle(EventTypeEnum.MouseUp, this.door.wood, this.onWoodUp, add);
+    }
+}
+
+
+/**
+ * Слушатель двери.
+ */
+class SlideDoorListener extends SectionListener {
+
+    protected onWoodUp:OpenDoorMouseUpHandler;
+
+    constructor(protected eventManager:EventManager,
+                protected door:SlideDoorSection,
+                protected doors:DoorSections) {
+        super(eventManager, door, doors);
+        this.onPlaneMove = new SlideDoorPlaneMouseMoveHandler(door, doors) as any as SectionPlaneMouseMoveHandler;
+    }
+    
+    listen(add:boolean = true) {
+        super.listen(add);
     }
 }
 
@@ -247,10 +272,12 @@ export class CupboardListener extends ObjectListener {
     protected planeMove:CupboardPlaneMouseMoveHandler;
     protected globalUp:CupboardMouseUpHandler;
     protected planeDown:CupboardPlaneMouseDownHandler;
+    protected wallsToggle:WoodMouseToggleHandler[] = [];
     protected key:CupboardKeyHandler;
     public changingSize:Vector3 = new Vector3();
     public previousSize:Vector3;
     public resizeStartPoint:Vector3;
+    protected wallToCoordinate:[Wood, Coordinate][];
 
     constructor(protected cupboard:Cupboard, protected eventManager:EventManager) {
         super();
@@ -261,13 +288,24 @@ export class CupboardListener extends ObjectListener {
         this.globalUp = new CupboardMouseUpHandler(this, this.cupboard);
         this.planeDown = new CupboardPlaneMouseDownHandler(this, this.cupboard);
         this.key = new CupboardKeyHandler(this, this.cupboard);
+        this.wallToCoordinate = [
+            [cupboard.walls.right, Coordinate.X],
+            [cupboard.walls.bottom, Coordinate.Y],
+            [cupboard.walls.left, Coordinate.Z],
+            [cupboard.walls.top, Coordinate.Z],
+        ];
+        for (let [wall] of this.wallToCoordinate) {
+            this.wallsToggle.push(new WoodMouseToggleHandler(wall));
+        }
     }
 
     listen(add:boolean = true) {
-        // Невидимая огромная плоскость
-        let plane = this.eventManager.mouse.plane;
+        let events = this.eventManager;
 
-        this.eventManager
+        // Невидимая огромная плоскость
+        let plane = events.mouse.plane;
+
+        events
             .toggle(EventTypeEnum.MouseMove, plane, this.planeMove, add)
             .toggle(EventTypeEnum.MouseUpGlobal, null, this.globalUp, add)
             .toggle(EventTypeEnum.MouseDown, plane, this.planeDown, add)
@@ -278,18 +316,16 @@ export class CupboardListener extends ObjectListener {
             EventTypeEnum.KeyDown,
             EventTypeEnum.KeyUp,
         ]) {
-            this.eventManager.toggle(type, null, this.key, add);
+            events.toggle(type, null, this.key, add);
         }
 
-        let wallToCoordinate:[Wood, Coordinate][] = [
-            [this.cupboard.walls.right, Coordinate.X],
-            [this.cupboard.walls.bottom, Coordinate.Y],
-            [this.cupboard.walls.left, Coordinate.Z],
-            [this.cupboard.walls.top, Coordinate.Z],
-        ];
+        for (let [wall, coordinate] of this.wallToCoordinate) {
+            events.toggle(EventTypeEnum.MouseDown, wall, this.wallDown[coordinate], add);
+        }
 
-        for (let [wall, coordinate] of wallToCoordinate) {
-            this.eventManager.toggle(EventTypeEnum.MouseDown, wall, this.wallDown[coordinate], add);
+        for (let handler of this.wallsToggle) {
+            events.toggle(EventTypeEnum.MouseEnter, handler.wood, handler, add);
+            events.toggle(EventTypeEnum.MouseLeave, handler.wood, handler, add);
         }
     }
 }

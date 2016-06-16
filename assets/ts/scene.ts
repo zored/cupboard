@@ -6,6 +6,7 @@ import {
     DirectionalLight,
     AmbientLight,
     Mesh,
+    Color,
     BoxGeometry,
     MeshPhongMaterial,
     ImageUtils,
@@ -13,6 +14,7 @@ import {
     BufferGeometry,
     PlaneBufferGeometry,
     MeshBasicMaterial,
+    TextureLoader
 } from "three";
 
 import {
@@ -74,12 +76,6 @@ export class Scene extends ThreeScene {
             doors.setSections(cupboard.doors),
         ].concat();
 
-        // Через 5 секунд устанавливаем количество стен и дверей на случайное:
-        setTimeout(() => {
-            walls.setAmount(Math.floor(Math.random() * 3) + 3);
-            doors.setAmount(Math.floor(Math.random() * 3) + 3);
-        }, 5000);
-
         // Получаем секции полок:
         this.listeners.forEach((events:ObjectListener) => events.listen(true));
     }
@@ -105,7 +101,7 @@ class Lights extends Object3D {
     constructor() {
         super();
         this.add(new MainLight());
-        this.add(new AmbientLight(0x666688));
+        this.add(new AmbientLight(0x888899));
     }
 }
 
@@ -120,9 +116,17 @@ class MainLight extends DirectionalLight {
         this.position.set(200, 300, 500);
         this.target.position.set(0, 0, 0);
 
-        let alpha = 0,
-            radius = 300;
+        // this.startMoveAround(0, 300);
+        this.setShadowSettings();
+    }
 
+    /**
+     * Начать двигаться по кругу.
+     *
+     * @param alpha
+     * @param radius
+     */
+    private startMoveAround(alpha:number, radius:number) {
         setInterval(() => {
             let x = Math.sin(alpha) * radius,
                 y = Math.cos(alpha) * radius;
@@ -133,27 +137,31 @@ class MainLight extends DirectionalLight {
 
             this.position.setX(x).setY(y);
         }, 20);
-        this.setShadowSettings();
     }
 
     protected setShadowSettings() {
-        let size = 500;
 
+        // Отбрасывать тень%
         this.castShadow = true;
 
+        // Размер для камеры:
+        let size = 500,
+        // Камера света
+            camera = this.shadow.camera as any;
 
-        this.shadowCameraFar = 4000;
-        this.shadowCameraNear = 1;
+        // Настройки камеры:
+        camera.far = 4000;
+        camera.near = 1;
+        camera.left = -size;
+        camera.right = size;
+        camera.top = size;
+        camera.bottom = -size;
 
-        this.shadowBias = 0.0001;
+        // Сглаживание тени:
+        this.shadow.bias = 0.0001;
 
-        this.shadowCameraLeft = -size;
-        this.shadowCameraRight = size;
-        this.shadowCameraTop = size;
-        this.shadowCameraBottom = -size;
-
-        this.shadowMapWidth = 2048;
-        this.shadowMapHeight = 2048;
+        // Размеры карты тени:
+        this.shadow.mapSize.set(1024, 1024);
     }
 }
 
@@ -173,6 +181,16 @@ export class Wood extends Mesh {
         this.castShadow = true;
         this.receiveShadow = true;
     }
+
+    /**
+     * Навели указатель мыши / увели его.
+     *
+     * @param enter
+     * @returns {Wood}
+     */
+    setHover(enter:boolean) {
+        (this.material as WoodMaterial).setHover(enter);
+    }
 }
 
 /**
@@ -191,10 +209,43 @@ class WoodMaterial extends MeshPhongMaterial {
     protected static color = 0x7777ff;
 
     constructor() {
-        super({
-            map: ImageUtils.loadTexture('wood_1.jpg')
-        });
+        super();
 
+        // Устанавливаем текстуру:
+        this.map = WoodMaterial.getTexture();
+
+        // this.startChangingMaterial();
+    }
+
+    /**
+     * Получить текстуру дерева.
+     *
+     * @returns {Texture}
+     */
+    protected static getTexture() {
+        return (new TextureLoader()).load('wood_1.jpg');
+    }
+
+    /**
+     * Подсветить.
+     * @param enter
+     * @returns {WoodMaterial}
+     */
+    setHover(enter:boolean) {
+        if (enter) {
+            this.color = new Color(0xff0000);
+            this.map = null;
+            return;
+        }
+        this.color = new Color(0xffffff);
+        this.map = WoodMaterial.getTexture();
+        return this;
+    }
+
+    /**
+     * Начать циклично изменять материал.
+     */
+    protected startChangingMaterial() {
         let index = 1;
         setInterval(() => {
             if (++index > 2) {
@@ -205,7 +256,6 @@ class WoodMaterial extends MeshPhongMaterial {
             texture.wrapT = RepeatWrapping;
             this.map = texture;
         }, 5000);
-
     }
 }
 
@@ -232,13 +282,13 @@ export class Section extends Object3D implements Resizable {
         this.wood.scale.setComponent(direction, thickness);
     }
 
-    deleteWall() {
+    hideWall() {
         this.remove(this.wood);
         this.wood = null;
     }
 
     /**
-     * Установить ширину
+     * Установить размер секции.
      *
      * @param index
      * @param size
@@ -253,13 +303,20 @@ export class Section extends Object3D implements Resizable {
         }
 
         if (index == this.direction) {
-            this.wood.position.setComponent(this.direction, size / 2);
+            let coordinate = size / 2;
+            this.wood.position.setComponent(this.direction, coordinate);
             return;
         }
 
-        this.wood.scale.setComponent(index, size);
+        this.wood.scale.setComponent(index, size - this.thickness);
     }
 
+    /**
+     * Установить размер секции.
+     *
+     * @param size
+     * @returns {Section}
+     */
     setSize(size:Vector3):Section {
         for (let i = 0; i < 3; i++) {
             this.setSizeComponent(i, size.getComponent(i));
@@ -278,9 +335,9 @@ export class Section extends Object3D implements Resizable {
 }
 
 /**
- * Секция с дверью.
+ * Секция с открывающейся дверью.
  */
-export class DoorSection extends Section {
+export class OpenDoorSection extends Section {
     public state:DoorState = DoorState.Closed;
 
     constructor(thickness:number, relativeSize:number, public openType:DoorDirection) {
@@ -313,6 +370,29 @@ export class DoorSection extends Section {
         }
         super.setPositionComponent(index, position);
         return this;
+    }
+}
+/**
+ * Секция с  дверью.
+ */
+export class SlideDoorSection extends Section {
+    constructor(thickness:number, relativeSize:number, public openType:DoorDirection) {
+        super(thickness, relativeSize, Coordinate.X);
+        this.setSizeComponent(Coordinate.Z, thickness);
+    }
+
+    setSizeComponent(index:Coordinate, size:number) {
+        if (index == Coordinate.X) {
+            size *= 0.97;
+        }
+
+        if (index == Coordinate.Z) {
+            this.wood.position.setZ(size / 2 + this.thickness);
+            size = this.thickness;
+        }
+
+        this.size.setComponent(index, size);
+        this.wood.scale.setComponent(index, size);
     }
 }
 
@@ -359,10 +439,20 @@ export class Sections extends Object3D implements Resizable {
         this.setAmount(amount);
     }
 
-    getAll() {
+    /**
+     * Получить все секции в виде массива.
+     *
+     * @returns {Section[]}
+     */
+    getAll():Section[] {
         return this.sections;
     }
 
+    /**
+     * Установить количество секций.
+     *
+     * @param amount
+     */
     setAmount(amount:number) {
         this.amount = amount;
 
@@ -370,12 +460,15 @@ export class Sections extends Object3D implements Resizable {
         this.clear();
 
         // Размер всех секций:
-        let sectionsSize:number = this.getDirectionSize(),
-        // Размер одной секции:
-            size:number = sectionsSize / amount,
-        // Относительный размер секции:
-            relativeSize:number = size / sectionsSize;
+        let sectionsSize:number = this.getDirectionSize();
 
+        // Размер одной секции:
+        let size:number = sectionsSize / amount;
+
+        // Относительный размер секции:
+        let relativeSize:number = size / sectionsSize;
+
+        // По количеству секций:
         for (let i = 0; i < amount; i++) {
             // Создаём секцию с заданным относительным размером:
             let section = this.createSection(relativeSize);
@@ -385,11 +478,12 @@ export class Sections extends Object3D implements Resizable {
             this.add(section);
         }
 
-        // Удаляем стенку / полку у последней секции
+        // Скрываем стенку / полку у последней секции, если это нужно
         if (this.deleteLastWood) {
-            this.sections[amount - 1].deleteWall();
+            this.sections[amount - 1].hideWall();
         }
 
+        // Обновляем геометрию секций:
         this.updateSectionsGeometry();
     }
 
@@ -476,12 +570,15 @@ export class Sections extends Object3D implements Resizable {
      * @returns {Sections}
      */
     updateSectionsGeometry() {
-        // Положение секции
-        let position = -this.getDirectionSize() / 2;
+        // Размер секций по направлению:
+        let allDirectionSize = this.getDirectionSize() - this.thickness * 2;
+
+        // Положение секции:
+        let position = -allDirectionSize / 2;
 
         for (let section of this.sections) {
             // Размер секции по направлению
-            let directionSize:number = this.getDirectionSize() * section.relativeSize;
+            let directionSize:number = allDirectionSize * section.relativeSize;
 
             // Отодвигаем координату центра секции на половину размера.
             position += directionSize / 2;
@@ -576,15 +673,25 @@ export class ShelfSections extends Sections {
  * Секции с дверьми.
  */
 export class DoorSections extends Sections {
+    /**
+     * Пcследняя дверь была спереди.
+     * @type {boolean}
+     */
+    protected static lastForward = false;
+
     constructor(size:Vector3, thickness:number, amount:number = 3, minSize:number = 20) {
         super(Coordinate.X, size, thickness, amount, minSize, false);
     }
 
     protected createSection(relativeSize:number):Section {
-        return new DoorSection(this.thickness, relativeSize, Math.round(Math.random()));
+        let door = new SlideDoorSection(this.thickness, relativeSize, Math.round(Math.random()));
+        if (DoorSections.lastForward) {
+            door.position.setZ(door.position.z - this.thickness);
+        }
+        DoorSections.lastForward = !DoorSections.lastForward;
+        return door;
     }
-
-
+    
     toggle() {
         this.visible = !this.visible;
     }
@@ -597,6 +704,7 @@ export class WallSections extends Sections {
     constructor(boundSize:Vector3,
                 thickness:number,
                 amount:number,
+                protected shelvesAmount:number,
                 minWidth:number = 20) {
         super(
             Coordinate.X,
@@ -629,7 +737,7 @@ export class WallSections extends Sections {
         return new ShelfSections(
             this.size.clone().setX(width),
             this.thickness,
-            Math.floor(Math.random() * 3) + 3
+            this.shelvesAmount
         );
     }
 
@@ -642,8 +750,19 @@ export class WallSections extends Sections {
  * Шкаф.
  */
 export class Cupboard extends Object3D implements Resizable {
+    /**
+     * Стены.
+     */
     public walls:Walls;
+
+    /**
+     * Секции с полками.
+     */
     public sections:WallSections;
+
+    /**
+     * Двери.
+     */
     public doors:DoorSections;
 
     /**
@@ -662,20 +781,33 @@ export class Cupboard extends Object3D implements Resizable {
         this.walls = new Walls(size, thickness);
 
         // Расчет случайного количества секций и дверей:
-        let rand = (from:number, to:number) => Math.floor(Math.random() * (to - from) + from);
 
         // Секции с полками:
-        this.sections = new WallSections(size, thickness, rand(3, 6));
+        this.sections = new WallSections(size, thickness, this.getRandomSectionAmount(), this.getRandomSectionAmount());
 
         // Двери:
-        this.doors = new DoorSections(size, thickness, rand(3, 6));
+        this.doors = new DoorSections(size, thickness, this.getRandomSectionAmount());
 
         // Добавляем объекты, которые будут изменять свой размер:
-        this.resizables.push(this.walls, this.sections, this.doors);
+        this.resizables.push(
+            this.walls,
+            this.sections,
+            this.doors
+        );
 
         this.add(this.walls);
         this.add(this.sections);
         this.add(this.doors);
+    }
+
+    /**
+     * Получить случайное число секций .
+     *
+     * @returns {number}
+     */
+    protected getRandomSectionAmount() {
+        let rand = (from:number, to:number) => Math.floor(Math.random() * (to - from) + from);
+        return rand(3, 6);
     }
 
     /**
@@ -686,16 +818,32 @@ export class Cupboard extends Object3D implements Resizable {
      * @returns {Cupboard}
      */
     setSizeComponent(index:Coordinate, size:number) {
+        // Задаем размеру ограничения:
         size = this.limitSize(index, size);
+
+        // Устанавливаем компонент размера:
         this.size.setComponent(index, size);
+
+        // Для каждого resizables задаем размер:
         for (let resizable of this.resizables) {
             resizable.setSizeComponent(index, size);
         }
     }
 
+    /**
+     * Ограничить размер.
+     *
+     * @param index
+     * @param size
+     * @returns {number}
+     */
     protected limitSize(index:Coordinate, size:number):number {
+        // Размер должен быть не больше максимального:
         size = Math.max(size, this.minSize.getComponent(index));
+
+        // И не меньше минимального:
         size = Math.min(size, this.maxSize.getComponent(index));
+
         return size;
     }
 }
@@ -721,61 +869,116 @@ export class BigPlane extends Mesh {
  * Основные стены шкафа.
  */
 class Walls extends Object3D implements Resizable {
+    /**
+     * Левая.
+     */
     public left:Wood;
+
+    /**
+     * Правая.
+     */
     public right:Wood;
+
+    /**
+     * Верхняя.
+     */
     public top:Wood;
+
+    /**
+     * Нижняя.
+     */
     public bottom:Wood;
+
+    /**
+     * Задняя.
+     */
     public back:Wood;
 
-    constructor(protected boundSize:Vector3, protected thickness:number) {
+    constructor(protected size:Vector3, protected thickness:number) {
         super();
 
+        // Создаём стенки:
         this
-            .createLeftRight(boundSize, thickness)
-            .createTopBottom(boundSize, thickness)
-            .createBack(boundSize, thickness);
+            .createLeftRight()
+            .createTopBottom()
+            .createBack();
     }
 
-    // Левая и правая стена
-    protected createLeftRight(boundSize:Vector3, thickness:number):Walls {
-        let size = boundSize.clone().setX(thickness);
-        let position = new Vector3((thickness - boundSize.x) / 2, 0, 0);
-        this.left = new Wood(size, position);
+    /**
+     * Создать левую и правую стенки.
+     *
+     * @returns {Walls}
+     */
+    protected createLeftRight():Walls {
+        // Берем рамзер шкафа и задаем ширину, равную толщине стенки:
+        let size = this.size.clone().setX(this.thickness);
 
-        position.x *= -1;
-        this.right = new Wood(size, position);
+        // По оси X сдвигаем влево на полшкафа и полтолщины:
+        let x = this.getHalf(this.size.x);
 
-        this.add(this.left);
-        this.add(this.right);
+        // Задаем левую и правую стенки:
+        this.add(this.left = new Wood(size, new Vector3(-x, 0, 0)));
+        this.add(this.right = new Wood(size, new Vector3(x, 0, 0)));
         return this;
     }
 
-    // Верхняя и нижняя стена
-    protected createTopBottom(boundSize:Vector3, thickness:number):Walls {
-        let size = boundSize.clone().setY(thickness).setX(boundSize.x - thickness * 2);
-        let position = new Vector3(0, (boundSize.y - thickness) / 2, 0);
-        this.top = new Wood(size, position);
-        position.y *= -1;
-        this.bottom = new Wood(size, position);
-        this.add(this.top);
-        this.add(this.bottom);
+    /**
+     * Создать верхнюю и нижнюю стены.
+     *
+     * @returns {Walls}
+     */
+    protected createTopBottom():Walls {
+        // Размер равен размеру шкафа с высотой, равной толщие и щириной, меньшей на две толщины.
+        let size = this.size
+            .clone()
+            .setY(this.thickness)
+            .setX(this.size.x - this.thickness * 2);
+
+        // Координата стенки по оси Y.
+        var y = this.getHalf(this.size.y);
+
+        // Задаем вернхюю и нижнюю стенки:
+        this.add(this.bottom = new Wood(size, new Vector3(0, -y, 0)));
+        this.add(this.top = new Wood(size, new Vector3(0, y, 0)));
         return this;
     }
 
-    // Задняя стена
-    protected createBack(boundSize:Vector3, thickness:number):Walls {
-        let size = boundSize.clone().setZ(thickness);
-        let position = new Vector3(0, 0, -boundSize.z / 2);
-        this.back = new Wood(size, position);
-        this.add(this.back);
+    /**
+     * Создать заднюю стенку.
+     *
+     * @returns {Walls}
+     */
+    protected createBack():Walls {
+        // Размер равен размеру шкафа с глубиной, равной толщине:
+        let size = this.size
+            .clone()
+            .setZ(this.thickness);
+
+        // Задаём координату Z:
+        var z = this.getHalf(this.size.z);
+
+        // Добавить заднюю стенку
+        this.add(this.back = new Wood(size, new Vector3(0, 0, -z)));
         return this;
     }
 
+    protected getHalf(size:number):number{
+        return (size - this.thickness) / 2;
+    }
+
+    /** @inheritDoc */
     setSizeComponent(index:Coordinate, size:number) {
-        this.boundSize.setComponent(index, size);
+        // Установить размер шкафа по оси.
+        this.size.setComponent(index, size);
 
-        let half:number = (size + this.thickness) * 0.5,
-            resizables:Wood[] = [];
+        // Половина размера:
+        let half:number = this.getHalf(size);
+
+        // Объекты, чей размер мы изменим.
+        let resizables:Wood[] = [];
+
+        // Размер для ресайза:
+        let scaleSize = size;
 
         switch (index) {
             case Coordinate.X:
@@ -786,6 +989,7 @@ class Walls extends Object3D implements Resizable {
                     this.bottom,
                     this.back
                 ];
+                scaleSize -= this.thickness * 2;
                 break;
 
             case Coordinate.Y:
@@ -809,7 +1013,10 @@ class Walls extends Object3D implements Resizable {
                 break;
         }
 
-        resizables.forEach((wall:Wood) => wall.scale.setComponent(index, size));
+        // Функция изменения размера:
+        let scale = (wall:Wood) => wall.scale.setComponent(index, scaleSize);
+
+        resizables.forEach(scale);
 
         return this;
     }

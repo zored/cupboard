@@ -1,7 +1,7 @@
 // В этом файле собраны классы для работы с событиями.
 
 import {
-    Camera, 
+    Camera,
     Canvas
 } from "./common";
 
@@ -11,7 +11,7 @@ import {
 } from "./scene";
 
 import {
-    Object3D, 
+    Object3D,
     Vector2,
     Intersection,
     Raycaster
@@ -198,7 +198,14 @@ class EventTypes {
     }
 
     getObjects(type:EventTypeEnum):Object3D[] {
-        return this.get(type).getObjects();
+        // Получаем тип события, либо выходим:
+        let eventType = this.get(type);
+        if (!eventType) {
+            return [];
+        }
+
+        // Получаем объекты из типа события:
+        return eventType.getObjects();
     }
 }
 
@@ -247,6 +254,9 @@ class Listener {
 
     trigger(data:EventData) {
         for (let handler of this.handlers) {
+            if (!handler) {
+                continue;
+            }
             handler.handle(data);
         }
         return this;
@@ -288,6 +298,10 @@ export class EventManager {
      */
     on(type:EventTypeEnum, object:Object3D, handler:EventHandler) {
         this.eventTypes.on(type, object, handler);
+        if (MouseEventPasser.notEnterOrLeave(type)){
+            return this;
+        }
+        this.eventTypes.on(EventTypeEnum.MouseMove, object, null);
         return this;
     }
 
@@ -337,7 +351,7 @@ export class EventManager {
                 continue;
             }
             this.eventTypes.trigger(type, object, data);
-
+    
             if (data.stop) {
                 data.stop = false;
                 break;
@@ -366,11 +380,13 @@ export abstract class EventPasser {
 export class MouseEventPasser extends EventPasser {
     protected raycaster:MouseRaycaster;
     public plane:BigPlane;
+    protected dataModifier:MouseEventDataModifier;
 
     constructor(protected canvas:Canvas, scene:Scene, protected camera:Camera, eventManager:EventManager) {
         super(eventManager);
         this.raycaster = new MouseRaycaster(camera);
         this.plane = scene.getClickPlane();
+        this.dataModifier = new MouseEventDataModifier(this);
     }
 
     /**
@@ -379,7 +395,7 @@ export class MouseEventPasser extends EventPasser {
     listen() {
         this.canvas.getJQuery().on({
             'mousedown': this.passToTrigger(EventTypeEnum.MouseDown),
-            'mousemove': this.passesToTrigger([EventTypeEnum.MouseMove, EventTypeEnum.MouseEnter, EventTypeEnum.MouseLeave]),
+            'mousemove': this.passToTrigger(EventTypeEnum.MouseMove),
             'mouseup': this.passToTrigger(EventTypeEnum.MouseUp),
             'touchstart': this.passTouchToTrigger(EventTypeEnum.MouseDown),
             'touchmove': this.passTouchToTrigger(EventTypeEnum.MouseMove),
@@ -388,14 +404,6 @@ export class MouseEventPasser extends EventPasser {
 
         this.canvas.$window
             .mouseup(this.passToTrigger(EventTypeEnum.MouseUpGlobal))
-    }
-
-    protected passesToTrigger(types:EventTypeEnum[]) {
-        return (event:JQueryMouseEventObject) => {
-            for (let type of types) {
-                this.trigger(new Vector2(event.offsetX, event.offsetY), type);
-            }
-        }
     }
 
     /**
@@ -449,16 +457,103 @@ export class MouseEventPasser extends EventPasser {
         this.raycaster.setPosition(position);
 
         // Событие
-        let data = new MouseEventData();
+        let data = new MouseEventData(type);
 
         // Установить пересечение с плоскостью
         data.setPlaneIntersection(this.intersectMouseRay(this.plane));
 
-        // Вызываем события
-        this.eventManager
-            .trigger(type, data, this.plane)
-            .trigger(type, data, null)
-            .triggerAll(type, data, new MouseEventDataModifier(this));
+        // Если нужно, запускаем событие на плоскости.
+        if (this.shouldTriggerPlane(type)) {
+            this.eventManager.trigger(type, data, this.plane)
+        }
+
+        // Если нужно, запускаем событие без привязки к объекту.
+        if (this.shouldTriggerNull(type)) {
+            this.eventManager.trigger(type, data, null);
+        }
+
+        // Если нужно, запускаем событие с привязкой к объекту.
+        if (!this.shouldTriggerObject(type)) {
+            return;
+        }
+
+        // Получаем модификатор данных:
+        let modifier = this.dataModifier;
+
+        // Триггерим событие для всех объектов, найденных в менеджере событий:
+        this.eventManager.triggerAll(type, data, modifier);
+
+        // Не двигали мышью - выходим.
+        if (type != EventTypeEnum.MouseMove) {
+            return;
+        }
+
+        // Запускаем обработчики для пересечений.
+        this
+            .triggerIntersection(data, EventTypeEnum.MouseEnter, modifier.enterIntersection)
+            .triggerIntersection(data, EventTypeEnum.MouseLeave, modifier.leaveIntersection);
+
+        // Убираем пересечения.
+        modifier.enterIntersection = modifier.leaveIntersection = null;
+    }
+
+    /**
+     * Запустить обработчики для объектов, связанных с указанными пересечениями.
+     *
+     * @param data
+     * @param type
+     * @param intersection
+     * @returns {MouseEventPasser}
+     */
+    protected triggerIntersection(data:MouseEventData, type:EventTypeEnum, intersection:Intersection) {
+        // Пересечения нет:
+        if (!intersection) {
+            return this;
+        }
+
+        // Запускаем событие для пересечения:
+        this.eventManager.trigger(type, data.setIntersection(intersection).setType(type), intersection.object);
+        return this;
+    }
+
+
+    /**
+     * Нужно ли запускать
+     *
+     * @param type
+     * @returns {boolean}
+     */
+    protected shouldTriggerPlane(type:EventTypeEnum) {
+        return MouseEventPasser.notEnterOrLeave(type);
+    }
+
+    /**
+     * Событие не о наведении мыши и не об уведении её от объекта.
+     *
+     * @returns {boolean}
+     */
+    public static notEnterOrLeave(type:EventTypeEnum) {
+        return [EventTypeEnum.MouseEnter, EventTypeEnum.MouseLeave].indexOf(type) == -1;
+    }
+
+    /**
+     * Нужно ли запускать событие без объекта.
+     *
+     * @param type
+     * @returns {boolean}
+     */
+    protected shouldTriggerNull(type:EventTypeEnum) {
+        return MouseEventPasser.notEnterOrLeave(type);
+    }
+
+    /**
+     * Нужно ли запускать событие на объекте.
+     *
+     * @param type
+     * @returns {boolean}
+     */
+    protected shouldTriggerObject(type:EventTypeEnum) {
+        return true;
     }
 }
 
@@ -481,7 +576,7 @@ export class KeyboardEventPasser extends EventPasser {
     }
 
     private trigger(event:JQueryKeyEventObject, type:EventTypeEnum) {
-        let data = new KeyBoardEventData();
+        let data = new KeyBoardEventData(type);
         data.jquery = event;
         data.type = type;
         this.eventManager.trigger(type, data);
@@ -536,6 +631,10 @@ interface TouchEvent extends UIEvent {
 export class EventData {
     public skip:boolean = false;
     public stop:boolean = false;
+
+    constructor(public type:EventTypeEnum) {
+
+    }
 }
 
 /**
@@ -566,6 +665,17 @@ export class MouseEventData extends EventData {
         this.intersection = intersection;
         return this;
     }
+
+    /**
+     * Установить тип данных.
+     *
+     * @param type
+     * @returns {MouseEventData}
+     */
+    setType(type:EventTypeEnum){
+        this.type = type;
+        return this;
+    }
 }
 
 /**
@@ -585,8 +695,20 @@ export class KeyBoardEventData extends EventData {
  * Модифицирует данные, передаваемые объекту в событии.
  */
 abstract class EventDataModifier {
+    /**
+     * Модифицировать конкретный объект.
+     *
+     * @param data
+     * @param object
+     */
     abstract modify(data:EventData, object:Object3D):EventData;
 
+    /**
+     * Модифицировать все объекты данного типа.
+     *
+     * @param data
+     * @param objects
+     */
     abstract modifyAll(data:EventData, objects:Object3D[]):Object3D[];
 }
 
@@ -594,29 +716,61 @@ abstract class EventDataModifier {
  * Модифицирует данные, передаваемые объекту в событии мыши.
  */
 class MouseEventDataModifier extends EventDataModifier {
+    /**
+     * Пересечения с мышью.
+     *
+     * @type {Array}
+     */
     protected intersections:Intersection[] = [];
+
+    /**
+     * Пересечение для объекта, на который мы навели указатель мыши.
+     */
+    public enterIntersection:Intersection;
+
+    /**
+     * Пересечение для объекта, с которого мы увели указатель мыши.
+     */
+    public leaveIntersection:Intersection;
+
+    /**
+     * Предыдущий объект, на котором была мышь.
+     */
+    protected previousFirstIntersection:Intersection;
 
     constructor(protected mouseEvents:MouseEventPasser) {
         super();
     }
 
+    /** @inheritDoc */
     modify(data:MouseEventData, object:Object3D) {
+        // Объекта нет - пропускаем.
         if (!object) {
             data.skip = true;
             return data;
         }
 
+        // Получаем пересечение с мышью:
         let intersection = this.getIntersectionByObject(object);
+
+        // Пересечения нет - пропускаем.
         if (!intersection) {
             data.skip = true;
             return data;
         }
 
+        // Добавить данные о пересечении в объект события.
         data.setIntersection(intersection);
         return data;
     }
 
-    protected getIntersectionByObject(object:Object3D) {
+    /**
+     * Получить пересечение для объекта.
+     *
+     * @param object
+     * @returns {Intersection}
+     */
+    protected getIntersectionByObject(object:Object3D):Intersection {
         for (let intersection of this.intersections) {
             if (intersection.object == object) {
                 return intersection;
@@ -626,27 +780,88 @@ class MouseEventDataModifier extends EventDataModifier {
         return undefined;
     }
 
+    /** @inheritDoc */
     modifyAll(data:EventData, objects:Object3D[]):Object3D[] {
+        // Устанавливаем пересечения и вовзвращаем их объекты:
+        return this.setObjectsIntersections(objects).map((intersection:Intersection) => intersection.object);
+    }
+
+    /**
+     * Установить пересечения для каждого из объектов.
+     *
+     * @param objects
+     */
+    protected setObjectsIntersections(objects:Object3D[]):Intersection[] {
+        // Сбрасываем пересечения.
         this.intersections = [];
 
+        // Получаем пересечения.
         for (let object of objects) {
             if (!object) {
                 continue;
             }
 
-            // Получаем пересечение
+            // Получаем пересечение:
             let intersection = this.mouseEvents.intersectMouseRay(object);
 
-            // Пересечения нет или нет точки пересечения
+            // Пересечения нет или нет точки пересечения:
             if (!intersection || !intersection.point) {
                 continue;
             }
 
+            // Добавляем пересечение:
             this.intersections.push(intersection);
         }
 
-        return this.intersections
-            .sort((a:Intersection, b:Intersection) => a.distance - b.distance)
-            .map((intersection:Intersection) => intersection.object);
+        // Сортируем от ближайшего до самого удалённого:
+        let closeToFar = (a:Intersection, b:Intersection) => a.distance - b.distance;
+        this.intersections.sort(closeToFar);
+
+        // Установить слушателя наведения и увода мыши:
+        this.setEnterLeave();
+
+        return this.intersections;
+    }
+
+    /**
+     * Установить объекты, на которые мы навели указатель / c которых увели указатель
+     */
+    protected setEnterLeave() {
+        // Первое пересечение:
+        let firstIntersection = this.getFirstIntersection();
+
+        // Первый объект:
+        let firstObject = firstIntersection && firstIntersection.object;
+
+        // Предыдущий объект.
+        let previousObject = this.previousFirstIntersection && this.previousFirstIntersection.object;
+
+        // Первые объекты одинаковы:
+        if (firstObject == previousObject) {
+            return;
+        }
+
+        // Мышь покинула предыдущее пересечение и пересекло новое:
+        this.leaveIntersection = this.previousFirstIntersection;
+        this.enterIntersection = firstIntersection;
+
+        // Устанавливаем предыдущее пересечение.
+        this.previousFirstIntersection = firstIntersection;
+    }
+
+    /**
+     * Получить первое пересечение.
+     *
+     * @returns {Intersection}
+     */
+    protected getFirstIntersection(): Intersection{
+        let intersection = this.intersections[0];
+        if (!intersection || !intersection.object) {
+            return intersection;
+        }
+        if (intersection.object == this.mouseEvents.plane) {
+            intersection = this.intersections[1];
+        }
+        return intersection;
     }
 }
