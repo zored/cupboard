@@ -16,7 +16,7 @@ import {
 import {
     Scene,
 } from "./scene";
-import {CupboardSizeInput} from "./form";
+import {ObjectSizeInput} from "./form";
 
 /**
  * Изменяет свой размер по всем координатам.
@@ -62,7 +62,7 @@ export class World {
 
         for(var i=0; i<3; i++) {
             let size = this.scene.cupboard.size.getComponent(i);
-            (new CupboardSizeInput(this.scene.cupboard, i)).setValue(size);
+            (new ObjectSizeInput(this.scene.cupboard, i)).setValue(size);
         }
         
     }
@@ -135,6 +135,38 @@ export class Canvas {
 
 export class Form{
 
+}
+
+export class Limits{
+    constructor(public min:number=-Infinity, public max:number=+Infinity){
+    }
+
+    /**
+     * Получить значение, принадлежащее границам. 
+     *
+     * @param value
+     * @returns {number}
+     */
+    limitValue(value:number){
+        value = Math.min(value, this.max);
+        value = Math.max(value, this.min);
+        return value;
+    }
+
+    /**
+     * Правильно ли установлены лимиты.
+     *
+     * @returns {boolean}
+     */
+    correct():boolean{
+        return this.max >= this.min;
+    }
+
+    shrink(value:number) {
+        this.min += value;
+        this.max -= value;
+        return this;
+    }
 }
 
 /**

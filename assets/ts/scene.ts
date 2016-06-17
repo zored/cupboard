@@ -19,7 +19,7 @@ import {
 
 import {
     Coordinate,
-    Resizable
+    Resizable, Limits
 } from "./common";
 
 import {
@@ -80,9 +80,6 @@ export class Scene extends ThreeScene {
 
         // Получаем секции полок:
         this.listeners.forEach((events:ObjectListener) => events.listen(true));
-
-        (new SectionsAmountInput('секций со стенами', walls)).setValue(cupboard.sections.getAmount());
-        (new SectionsAmountInput('дверей', doors)).setValue(cupboard.doors.getAmount());
     }
 
     // Добавить все объекты
@@ -329,8 +326,23 @@ export class Section extends Object3D implements Resizable {
         return this;
     }
 
-    getWallPositionComponent(index:number) {
+    /**
+     * Получить положение стенки секции.
+     *
+     * @param index
+     * @returns {number}
+     */
+    protected getWallPositionComponent(index:number) {
         return this.position.getComponent(index) + this.size.getComponent(index) / 2;
+    }
+
+    /**
+     * Получить положение стены по направлению.
+     *
+     * @returns {number}
+     */
+    getWallDirectionPosition(){
+        return this.getWallPositionComponent(this.direction);
     }
 
     setPositionComponent(index:number, position:number) {
@@ -457,6 +469,7 @@ export class Sections extends Object3D implements Resizable {
                 protected minAmount = 2,
                 protected maxAmount = 30) {
         super();
+        this.minSize += thickness;
 
         // Объект для обновления геометрии.
         this.geometryUpdater = this.createGeometryUpdater();
@@ -573,7 +586,7 @@ export class Sections extends Object3D implements Resizable {
      * @param checkNext
      * @returns {Sections}
      */
-    setRelativeOneSizeComponent(section:Section, size:number, checkNext:boolean = true):void {
+    setOneRelativeSize(section:Section, size:number, checkNext:boolean = true):void {
         // Изменение относительного размера:
         let delta = size - section.relativeSize;
 
@@ -594,7 +607,7 @@ export class Sections extends Object3D implements Resizable {
         }
 
         // Устанавливаем размер следующей секции:
-        this.setRelativeOneSizeComponent(next, next.relativeSize - delta, false);
+        this.setOneRelativeSize(next, next.relativeSize - delta, false);
     }
 
     /**
@@ -679,6 +692,61 @@ export class Sections extends Object3D implements Resizable {
 
     getAmount() {
         return this.amount;
+    }
+
+    /**
+     * Получить положение ближайшей стены.
+     *
+     * @param section
+     * @param deltaIndex
+     * @returns {number}
+     */
+    protected getNearWallDirectionCoordinate(section:Section, deltaIndex:number){
+        let near = this.getNear(section, deltaIndex);
+        if (near) {
+            return near.getWallDirectionPosition();
+        }
+        let size = this.getDirectionSize() / 2;
+        if (deltaIndex > 0) {
+            return size;
+        }
+        return -size;
+    }
+
+    /**
+     * Попробовать установить координату стены секции.
+     * @param section
+     * @param wallPosition
+     */
+    setOneWallPosition(section:Section, wallPosition:number) {
+        // Ограничения:
+        let limits = new Limits(
+            this.getNearWallDirectionCoordinate(section, -1),
+            this.getNearWallDirectionCoordinate(section, +1)
+        );
+        
+        // Сужаем ограничения на минимальный размер секции:
+        limits.shrink(this.minSize);
+        
+        // Неправильные ограничения:
+        if (!limits.correct()) {
+            return;
+        }
+
+        // Ограничиваем положение стены:
+        wallPosition = limits.limitValue(wallPosition);
+        
+        // Возвращаем ограничения от стенки до стенки:
+        limits.shrink(-this.minSize);
+
+        // Размер секции: положение за вычетом координаты стенки неподалёку:
+        let size = wallPosition - limits.min;
+        
+        // Относительный размер секции:
+        let relativeSize = size / this.getDirectionSize();
+
+        // Устанавливаем относительный размер стенки:
+        this.setOneRelativeSize(section, relativeSize);
     }
 }
 

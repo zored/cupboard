@@ -27,7 +27,7 @@ import {
 import {
     Coordinate, Resizable
 } from "./common";
-import {InputHandler, IntValue} from "./form";
+import {InputHandler, IntValue, ObjectSizeInput, SectionSizeInput} from "./form";
 import Object3D = THREE.Object3D;
 
 /**
@@ -308,45 +308,52 @@ export class DoorKeyUpHandler extends EventHandler {
     }
 }
 
+class SectionsResizer{
+    
+}
+
 /**
  * Обработчик движений мыши по плоскости для секции.
  */
 export class SectionPlaneMouseMoveHandler extends EventHandler {
     constructor(protected section:Section,
-                protected sections:Sections) {
+                protected sections:Sections,
+                protected sizeInput:SectionSizeInput,
+                public nextSizeInput:SectionSizeInput = null) {
         super();
     }
-
+    
     handle(data:MouseEventData) {
-        if (!this.section.resizing) return;
+        if (!this.section.resizing){
+            return;  
+        }
 
-        let direction = this.sections.direction,
-            previous:Section = this.sections.getPrevious(this.section),
-            next:Section = this.sections.getNext(this.section),
-            directionSize = this.sections.getDirectionSize(),
-            halfDirectionSize = directionSize / 2,
-            mouseCoordinate = data.getPlaneIntersection().point.getComponent(direction), // координата мыши
-            minEdge = previous ? previous.getWallPositionComponent(direction) : -halfDirectionSize, // откуда считать размер
-            maxCoordinate = next ? next.getWallPositionComponent(direction) : +halfDirectionSize, // максимум координаты мыши
-            minCoordinate = minEdge, // минимум координаты мыши
-            minSectionSize = this.sections.thickness + this.sections.minSize; // минимальный размер секции
+        // Получаем координату мыши:
+        let mousePosition = data.getPlaneIntersection().point.getComponent(this.sections.direction);
 
-        // Добавляем минимальный размер секции к ограничениям.
-        maxCoordinate -= minSectionSize;
-        minCoordinate += minSectionSize;
+        // Установитм положение стены:
+        this.sections.setOneWallPosition(this.section, mousePosition);
 
-        // Ограничения не позволяют перемещать секцию.
-        if (minCoordinate > maxCoordinate) return;
+        // Заполняем текстовые поля:
+        this.fillInputs();
+    }
 
-        // Ограничиваем координату мыши
-        mouseCoordinate = Math.min(mouseCoordinate, maxCoordinate);
-        mouseCoordinate = Math.max(mouseCoordinate, minCoordinate);
+    /**
+     * Заполнить поля ввода:
+     */
+    protected fillInputs(){
+        // Размер секции:
+        this.fillInput(this.sizeInput, this.section);
+        if (!this.nextSizeInput) {
+            return;
+        }
+        // Размер следующей секции:
+        this.fillInput(this.nextSizeInput, this.nextSizeInput.object as Section);
+    }
 
-        // Устанавливаем размер секции
-        let size = mouseCoordinate - minEdge,
-            relativeSize = size / directionSize;
-
-        this.sections.setRelativeOneSizeComponent(this.section, relativeSize);
+    protected fillInput(input:ObjectSizeInput, section:Section){
+        input.setValue(section.relativeSize * this.sections.getDirectionSize());
+        return this;
     }
 }
 
@@ -499,6 +506,38 @@ export class ObjectSizeInputHandler extends InputHandler{
     /** @inheritDoc */
     public handle(value:IntValue) {
         (this.object as any as Resizable).setSizeComponent(this.index, value.get());
+    }
+}
+
+/**
+ * Обработчик для установки размера объекта по указанной координатеиз поля ввода.
+ */
+export class SectionSizeInputHandler extends ObjectSizeInputHandler{
+    protected next:SectionSizeInput;
+
+    constructor(protected sections:Sections, protected section:Section, index:Coordinate) {
+        super(section, index);
+    }
+
+    /** @inheritDoc */
+    public handle(value:IntValue) {
+        let size:number = value.get();
+
+        if (!size) {
+            return;
+        }
+
+        let relativeSize = size / this.sections.getDirectionSize();
+        this.sections.setOneRelativeSize(this.object as Section, relativeSize);
+        if (!this.next) {
+            return;
+        }
+        this.next.setValue((this.next.object as Section).relativeSize * this.sections.getDirectionSize());
+    }
+
+    setNext(next:SectionSizeInput) {
+        this.next = next;
+        return this;
     }
 }
 

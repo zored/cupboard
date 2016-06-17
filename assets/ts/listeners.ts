@@ -35,6 +35,7 @@ import {
 import {
     Coordinate
 } from "./common";
+import {SectionsAmountInput, Input, ObjectSizeInput, SectionSizeInput} from "./form";
 
 /**
  * Слушатель набора секций.
@@ -53,9 +54,19 @@ export class SectionsListener extends ObjectListener {
      * @type Sections
      */
     protected sections:Sections;
+    
+    /**
+     * Поле для ввода количества стен.
+     */
+    protected amountInput:SectionsAmountInput;
 
     constructor(protected eventManager:EventManager) {
         super();
+        this.amountInput = this.createAmountInput();
+    }
+    
+    protected createAmountInput(){
+        return new SectionsAmountInput(this);
     }
 
     /**
@@ -66,8 +77,9 @@ export class SectionsListener extends ObjectListener {
     setSections(sections:Sections) {
         this.listen(false);
         this.sections = sections;
-        this.sections.getAll().forEach(this.addSectionEvent);
+        this.sections.getAll().forEach(this.addListener);
         this.listen(true);
+        this.amountInput.setValue(sections.getAmount());
         return this;
     }
 
@@ -76,13 +88,38 @@ export class SectionsListener extends ObjectListener {
      *
      * @param section
      */
-    protected addSectionEvent = (section:Section) => {
+    protected addListener = (section:Section) => {
         // Создаём событие для секции:
-        let sectionEvent = new SectionListener(this.eventManager, section, this.sections);
+        this.pushListener(new SectionListener(this.eventManager, section, this.sections));
+    };
+
+    /**
+     * Добавить слушателя.
+     *
+     * @param listener
+     */
+    protected pushListener(listener:SectionListener){
+        // Устанавливаем последнему слушателю данный как следующий:
+        this.setNextToLastListener(listener);
 
         // Добавляем его в массив:
-        this.listeners.push(sectionEvent);
-    };
+        this.listeners.push(listener);
+    }
+
+
+    /**
+     * Установить полследнему слушателю текущий как следующий.
+     *
+     * @param listener
+     */
+    protected setNextToLastListener(listener:SectionListener){
+        let last = this.listeners.pop();
+        if (!last) {
+            return;
+        }
+        last.setNextSectionListener(listener);
+        this.listeners.push(last);
+    }
 
     /** @inheritDoc */
     listen(add:boolean = true):void {
@@ -95,8 +132,15 @@ export class SectionsListener extends ObjectListener {
      * @param amount
      */
     setAmount(amount:number) {
+        this.amountInput.setValue(amount);
         this.sections.setAmount(amount);
         this.setSections(this.sections);
+    }
+}
+
+class ShelfSectionsListener extends SectionsListener{
+    protected createAmountInput():SectionsAmountInput {
+        return super.createAmountInput().setPrefix('полок');
     }
 }
 
@@ -111,13 +155,14 @@ export class WallSectionsListener extends SectionsListener {
 
     constructor(eventManager:EventManager) {
         super(eventManager);
+        this.amountInput.setPrefix('секций');
     }
 
     /** @inheritDoc */
     setSections(sections:Sections) {
         this.shelfListeners = (sections as WallSections)
             .getShelfSections()
-            .map((sections:ShelfSections) => (new SectionsListener(this.eventManager)).setSections(sections));
+            .map((sections:ShelfSections) => (new ShelfSectionsListener(this.eventManager)).setSections(sections));
         super.setSections(sections);
         return this;
     }
@@ -150,17 +195,18 @@ export class DoorsSectionsListener extends SectionsListener {
     constructor(eventManager:EventManager) {
         super(eventManager);
 
+        this.amountInput.setPrefix('дверей');
+        
         // Заменяем событие добавления секции:
-        this.addSectionEvent = (door:SlideDoorSection) => {
+        this.addListener = (door:SlideDoorSection) => {
             // Создаём событие для секции:
-            let doors = this.sections as DoorSections,
-                event = new SlideDoorListener(this.eventManager, door, doors);
+            let doors = this.sections as DoorSections;
 
             // Добавляем его в массив:
-            this.listeners.push(event);
+            this.pushListener(new SlideDoorListener(this.eventManager, door, doors));
         };
     }
-
+    
     /** @inheritDoc */
     setSections(sections:Sections) {
         let doors = sections as DoorSections;
@@ -184,6 +230,7 @@ class SectionListener extends ObjectListener {
     protected onPlaneUp:SectionWallMouseHandler;
     protected onPlaneMove:SectionPlaneMouseMoveHandler;
     protected onWoodHover:WoodMouseToggleHandler;
+    public sizeInput:SectionSizeInput;
 
     constructor(protected eventManager:EventManager,
                 protected section:Section,
@@ -192,12 +239,20 @@ class SectionListener extends ObjectListener {
         if (this.isInvalid()) {
             return;
         }
+        this.sizeInput = new SectionSizeInput(sections, section);
+        this.sizeInput.setValue(section.relativeSize * sections.getDirectionSize());
 
         // Задаём обработчики событий.
         this.onWallDown = new SectionWallMouseHandler(section, sections, EventTypeEnum.MouseDown);
         this.onWoodHover = new WoodMouseToggleHandler(section.wood);
         this.onPlaneUp = new SectionWallMouseHandler(section, sections, EventTypeEnum.MouseUp);
-        this.onPlaneMove = new SectionPlaneMouseMoveHandler(section, sections);
+        this.onPlaneMove = new SectionPlaneMouseMoveHandler(section, sections, this.sizeInput);
+    }
+
+    setNextSectionListener(next:SectionListener){
+        let nextInput = next.sizeInput;
+        this.onPlaneMove.nextSizeInput = nextInput;
+        this.sizeInput.setNext(nextInput);
     }
 
     /**

@@ -1,10 +1,11 @@
 import * as $ from "jquery";
-import {ObjectSizeInputHandler, SectionAmountInputHandler} from "./handlers";
-import {Cupboard} from "./scene";
+import {ObjectSizeInputHandler, SectionAmountInputHandler, SectionSizeInputHandler} from "./handlers";
+import {Cupboard, Section, Sections} from "./scene";
 import {Coordinate} from "./common";
 import {SectionsListener} from "./listeners";
+import Object3D = THREE.Object3D;
 
-abstract class Input {
+export abstract class Input {
     public element:JQuery;
     public input:JQuery;
     public handler:InputHandler;
@@ -15,6 +16,21 @@ abstract class Input {
         this.handler.handle(this.getValue());
     };
 
+    /**
+     * Установить название.
+     *
+     * @param name
+     */
+    protected setName(name:string) {
+        this.name = name;
+        this.getNameHolder().text(name);
+        return this;
+    }
+
+    protected getNameHolder():JQuery {
+        return this.element.find('.name');
+    }
+
     constructor(protected name:string = '') {
         this.element = this.createElement();
         this.input = this.createInput();
@@ -24,31 +40,31 @@ abstract class Input {
         $('body').append(this.element);
     }
 
-    protected listen(){
+    protected listen() {
         this.element.on({
             change: this.launchHandler,
             keyup: this.launchHandler
         });
     }
 
-    
-    protected getValue():InputValue{
+
+    protected getValue():InputValue {
         return this.createValue().set(this.getValueFromElement());
     }
-    
-    protected createValue():InputValue{
+
+    protected createValue():InputValue {
         return new InputValue();
     }
-    
-    protected getValueFromElement():any{
+
+    protected getValueFromElement():any {
         return this.input.val();
     }
 
-    protected appendInput(){
+    protected appendInput() {
         this.element.find('.holder').append(this.input);
     }
 
-    protected createElement(){
+    protected createElement() {
         return $(`
             <div class="input">
                 <div class="name">${this.name}</div>
@@ -69,7 +85,7 @@ abstract class Input {
 
 class NumberInput extends Input {
     protected createValue():InputValue {
-        return super.createValue();
+        return new IntValue();
     }
 }
 
@@ -88,28 +104,60 @@ export abstract class InputHandler {
 /**
  * Поле для ввода размера шкафа.
  */
-export class CupboardSizeInput extends NumberInput{
-    constructor(cupboard:Cupboard, index:Coordinate) {
+export class ObjectSizeInput extends NumberInput {
+    protected prefix:string;
+    constructor(public object:Object3D, protected index:Coordinate) {
+        super('');
         let names = ['Ширина', 'Высота', 'Глубина'];
-        super(names[index]);
-        this.handler = new ObjectSizeInputHandler(cupboard, index);
+        this.prefix = names[index];
+        this.setName('');
+        this.handler = this.createHandler();
+    }
+    
+    protected createHandler(){
+        return new ObjectSizeInputHandler(this.object, this.index);
+    }
+
+    protected setName(name:string) {
+        this.name = this.prefix + ' ' + this.name;
+        super.setName(name);
+        return this;
+    }
+}
+
+/**
+ * Поле для ввода размера шкафа.
+ */
+export class SectionSizeInput extends ObjectSizeInput {
+    constructor(protected sections:Sections, protected section:Section) {
+        super(section, sections.direction);
+        this.handler = new SectionSizeInputHandler(this.sections, this.section, this.index);
+    }
+
+    setNext(next:SectionSizeInput) {
+        (this.handler as SectionSizeInputHandler).setNext(next);
     }
 }
 
 /**
  * Поле для ввода количества секций.
  */
-export class SectionsAmountInput extends NumberInput{
-    constructor(prefix:string, sectionsListener:SectionsListener) {
-        super('Количество ' + prefix);
+export class SectionsAmountInput extends NumberInput {
+    constructor(sectionsListener:SectionsListener) {
+        super(null);
         this.handler = new SectionAmountInputHandler(sectionsListener);
+    }
+
+    setPrefix(prefix:string) {
+        this.setName('Количество ' + prefix);
+        return this;
     }
 }
 
 /**
  * Значение поля ввода.
  */
-export class InputValue{
+export class InputValue {
     constructor(protected value:any = null) {
         this.set(value);
     }
@@ -120,7 +168,7 @@ export class InputValue{
      * @param value
      * @returns {InputValue}
      */
-    set(value:any){
+    set(value:any) {
         this.value = value;
         return this;
     }
@@ -130,7 +178,7 @@ export class InputValue{
      *
      * @returns {any}
      */
-    get():any{
+    get():any {
         return this.value;
     }
 }
@@ -138,8 +186,8 @@ export class InputValue{
 /**
  * Целочисленное значение.
  */
-export class IntValue extends InputValue{
-    set(value:any){
+export class IntValue extends InputValue {
+    set(value:any) {
         value = parseInt(value);
         super.set(value);
         return this;
