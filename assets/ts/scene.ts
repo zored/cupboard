@@ -24,13 +24,13 @@ import {
 
 import {
     EventManager,
-    ObjectListener
+    Reactions
 } from "./event";
 
 import {
     WallSectionsListener,
     DoorsSectionsListener,
-    CupboardListener
+    CupboardHandlerSet
 } from "./listeners";
 
 import {
@@ -44,7 +44,7 @@ import {SectionsAmountInput} from "./form";
  */
 export class Scene extends ThreeScene {
     protected clickPlane:BigPlane;
-    protected listeners:ObjectListener[];
+    protected listeners:Reactions[];
     public cupboard:Cupboard;
 
     constructor() {
@@ -73,13 +73,13 @@ export class Scene extends ThreeScene {
 
         // Устанавливаем массив слушателей:
         this.listeners = [
-            new CupboardListener(cupboard, eventManager),
+            new CupboardHandlerSet(cupboard, eventManager),
             walls.setSections(cupboard.sections),
             doors.setSections(cupboard.doors),
         ].concat();
 
         // Получаем секции полок:
-        this.listeners.forEach((events:ObjectListener) => events.listen(true));
+        this.listeners.forEach((events:Reactions) => events.enable(true));
     }
 
     // Добавить все объекты

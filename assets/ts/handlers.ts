@@ -1,9 +1,9 @@
 import {
-    EventData,
-    MouseEventData,
-    KeyBoardEventData,
-    EventHandler,
-    EventTypeEnum,
+    Reason,
+    MouseReason,
+    KeyboardReason,
+    Reaction,
+    EventType,
     KeyCodeEnum
 } from "./event";
 
@@ -20,7 +20,7 @@ import {
 } from "three";
 
 import {
-    CupboardListener,
+    CupboardHandlerSet,
     SectionsListener
 } from "./listeners";
 
@@ -33,18 +33,19 @@ import Object3D = THREE.Object3D;
 /**
  * Обработчик событий для шкафа.
  */
-abstract class CupboardHandler extends EventHandler {
-    constructor(protected listener:CupboardListener,
+abstract class AbstractCupboardHandler extends Reaction {
+    constructor(event:EventType,
+                protected listener:CupboardHandlerSet,
                 protected cupboard:Cupboard) {
-        super();
+        super(event);
     }
 }
 
 /**
  * Обработчик движения мыши по плоскости для шкафа.
  */
-export class CupboardPlaneMouseMoveHandler extends CupboardHandler {
-    handle(data:MouseEventData) {
+export class CupboardPlaneMouseMoveHandler extends AbstractCupboardHandler {
+    handle(data:MouseReason) {
         // Получить точку пересечения с плоскостью:
         let point = data.getPlaneIntersection().point;
 
@@ -97,8 +98,8 @@ export class CupboardPlaneMouseMoveHandler extends CupboardHandler {
 /**
  * Обработчик щелчка мыши для шкафа.
  */
-export class CupboardMouseUpHandler extends CupboardHandler {
-    handle(data:EventData) {
+export class CupboardMouseUpHandler extends AbstractCupboardHandler {
+    handle(data:Reason) {
         this.listener.changingSize.set(0, 0, 0);
     }
 }
@@ -106,8 +107,8 @@ export class CupboardMouseUpHandler extends CupboardHandler {
 /**
  * Обработчик нажатия мыши на плоскости дял шкафа.
  */
-export class CupboardPlaneMouseDownHandler extends CupboardHandler {
-    handle(data:MouseEventData) {
+export class CupboardPlaneMouseDownHandler extends AbstractCupboardHandler {
+    handle(data:MouseReason) {
         this.listener.resizeStartPoint = data.getPlaneIntersection().point;
         this.listener.previousSize = this.cupboard.size.clone();
     }
@@ -116,12 +117,12 @@ export class CupboardPlaneMouseDownHandler extends CupboardHandler {
 /**
  * Обработчик нажатия мыши на стене.
  */
-export class WallMouseDownHandler extends CupboardHandler {
-    constructor(mouseEvents:CupboardListener, cupboard:Cupboard, protected index:number) {
+export class WallMouseDownHandler extends AbstractCupboardHandler {
+    constructor(mouseEvents:CupboardHandlerSet, cupboard:Cupboard, protected index:number) {
         super(mouseEvents, cupboard);
     }
 
-    handle(data:EventData) {
+    handle(data:Reason) {
         this.listener.changingSize.setComponent(this.index, 1);
     }
 }
@@ -129,17 +130,17 @@ export class WallMouseDownHandler extends CupboardHandler {
 /**
  * Обработчик событий мыши секции стены.
  */
-export class SectionWallMouseHandler extends EventHandler {
+export class SectionWallMouseHandler extends Reaction {
     constructor(protected section:Section,
                 protected sections:Sections,
-                public eventType:EventTypeEnum) {
+                public eventType:EventType) {
         super();
     }
 
-    handle(data:EventData) {
+    handle(data:Reason) {
         data.stop = true;
 
-        let resizing = (this.eventType == EventTypeEnum.MouseDown);
+        let resizing = (this.eventType == EventType.MouseDown);
 
         if (resizing && this.sections.oneResizing) {
             return;
@@ -152,15 +153,15 @@ export class SectionWallMouseHandler extends EventHandler {
 /**
  * Обработчик наведения мыши / снятия наведения
  */
-export class WoodMouseToggleHandler extends EventHandler {
+export class WoodMouseToggleHandler extends Reaction {
     constructor(public wood:Wood) {
         super();
     }
 
     /** @inheritDoc */
-    handle(data:EventData):void {
+    handle(data:Reason):void {
         // Навели ли мы указатель или увели:
-        let enter = (data.type == EventTypeEnum.MouseEnter);
+        let enter = (data.event == EventType.MouseEnter);
 
         // Наводим мышь на часть секции:
         this.wood.setHover(enter);
@@ -188,14 +189,14 @@ export enum DoorState{
 /**
  * Обработчик нажатия мыши на двери.
  */
-export class OpenDoorMouseUpHandler extends EventHandler {
+export class OpenDoorMouseUpHandler extends Reaction {
     constructor(protected door:OpenDoorSection,
                 protected doors:DoorSections,
-                public eventType:EventTypeEnum) {
+                public eventType:EventType) {
         super();
     }
 
-    handle(data:EventData) {
+    handle(data:Reason) {
         data.stop = true;
         switch (this.door.state) {
             case DoorState.Opening:
@@ -294,12 +295,12 @@ export class OpenDoorMouseUpHandler extends EventHandler {
 /**
  * Обрабочик нажатий клавиатуры у двери.
  */
-export class DoorKeyUpHandler extends EventHandler {
+export class DoorKeyUpHandler extends Reaction {
     constructor(protected doors:DoorSections) {
         super();
     }
 
-    handle(data:KeyBoardEventData):void {
+    handle(data:KeyboardReason):void {
         if (data.jquery.keyCode != 79) {
             return;
         }
@@ -315,7 +316,7 @@ class SectionsResizer{
 /**
  * Обработчик движений мыши по плоскости для секции.
  */
-export class SectionPlaneMouseMoveHandler extends EventHandler {
+export class SectionPlaneMouseMoveHandler extends Reaction {
     constructor(protected section:Section,
                 protected sections:Sections,
                 protected sizeInput:SectionSizeInput,
@@ -323,7 +324,7 @@ export class SectionPlaneMouseMoveHandler extends EventHandler {
         super();
     }
     
-    handle(data:MouseEventData) {
+    handle(data:MouseReason) {
         if (!this.section.resizing){
             return;  
         }
@@ -406,7 +407,7 @@ export class DoorsCoordinateLimitChecker {
 /**
  * Обработчик движений мыши по плоскости для двери.
  */
-export class SlideDoorPlaneMouseMoveHandler extends EventHandler {
+export class SlideDoorPlaneMouseMoveHandler extends Reaction {
     protected limitChecker:DoorsCoordinateLimitChecker;
 
     constructor(protected door:Section,
@@ -415,7 +416,7 @@ export class SlideDoorPlaneMouseMoveHandler extends EventHandler {
         this.limitChecker = new DoorsCoordinateLimitChecker(doors);
     }
 
-    handle(data:MouseEventData) {
+    handle(data:MouseReason) {
         if (!this.door.resizing) return;
 
         // Координата X для двери
@@ -431,18 +432,23 @@ export class SlideDoorPlaneMouseMoveHandler extends EventHandler {
 /**
  * Обработчик клавиатуры для шкафа.
  */
-export class CupboardKeyHandler extends CupboardHandler {
+export class CupboardKeyHandler extends AbstractCupboardHandler {
     protected rotateInterval:number;
     protected moveInterval:number;
 
+
+    constructor(event:EventType, listener:CupboardHandlerSet, cupboard:Cupboard) {
+        super(event, listener, cupboard);
+    }
+
     /** @inheritDoc */
-    handle(data:KeyBoardEventData):void {
-        data.type == EventTypeEnum.KeyDown
+    handle(data:KeyboardReason):void {
+        data.type == EventType.KeyDown
             ? this.down(data)
             : this.up(data);
     }
 
-    protected up(data:KeyBoardEventData):void {
+    protected up(data:KeyboardReason):void {
         switch (data.jquery.keyCode) {
             case KeyCodeEnum.LEFT:
             case KeyCodeEnum.RIGHT:
@@ -456,7 +462,7 @@ export class CupboardKeyHandler extends CupboardHandler {
         }
     }
 
-    protected down(data:KeyBoardEventData):void {
+    protected down(data:KeyboardReason):void {
         switch (data.jquery.keyCode) {
             case KeyCodeEnum.LEFT:
                 this.startRotate(+1);

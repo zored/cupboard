@@ -4,6 +4,7 @@ import {Cupboard, Section, Sections} from "./scene";
 import {Coordinate} from "./common";
 import {SectionsListener} from "./listeners";
 import Object3D = THREE.Object3D;
+import {AbstractReactions} from "./event";
 
 export abstract class Input {
     public element:JQuery;
@@ -36,8 +37,6 @@ export abstract class Input {
         this.input = this.createInput();
         this.appendInput();
         this.listen();
-        // XXX
-        $('body').append(this.element);
     }
 
     protected listen() {
@@ -106,18 +105,26 @@ export abstract class InputHandler {
  */
 export class ObjectSizeInput extends NumberInput {
     protected prefix:string;
+
     constructor(public object:Object3D, protected index:Coordinate) {
         super('');
         let names = ['Ширина', 'Высота', 'Глубина'];
         this.prefix = names[index];
         this.setName('');
         this.handler = this.createHandler();
+        this.setValue(object.scale.getComponent(index))
     }
-    
-    protected createHandler(){
+
+    /**
+     * Создать обработчик.
+     *
+     * @returns {ObjectSizeInputHandler}
+     */
+    protected createHandler() {
         return new ObjectSizeInputHandler(this.object, this.index);
     }
 
+    /** @inheritDoc */
     protected setName(name:string) {
         this.name = this.prefix + ' ' + this.name;
         super.setName(name);
@@ -126,7 +133,7 @@ export class ObjectSizeInput extends NumberInput {
 }
 
 /**
- * Поле для ввода размера шкафа.
+ * Поле для ввода размера раздела.
  */
 export class SectionSizeInput extends ObjectSizeInput {
     constructor(protected sections:Sections, protected section:Section) {
@@ -134,8 +141,22 @@ export class SectionSizeInput extends ObjectSizeInput {
         this.handler = new SectionSizeInputHandler(this.sections, this.section, this.index);
     }
 
+    /**
+     * Установить следующее поле ввода размера раздела.
+     * @param next
+     */
     setNext(next:SectionSizeInput) {
         (this.handler as SectionSizeInputHandler).setNext(next);
+    }
+}
+
+/**
+ * Поле для ввода размера шкафа.
+ */
+class CupboardSizeInput extends ObjectSizeInput {
+    constructor(cupboard:Cupboard, index:Coordinate) {
+        super(cupboard, index);
+        this.setValue(cupboard.size.getComponent(index));
     }
 }
 
@@ -187,13 +208,77 @@ export class InputValue {
  * Целочисленное значение.
  */
 export class IntValue extends InputValue {
+    /** @inheritDoc */
     set(value:any) {
         value = parseInt(value);
         super.set(value);
         return this;
     }
 
+    /** @inheritDoc */
     get():number {
         return parseInt(super.get());
     }
+}
+
+/**
+ * Форма.
+ * Содержит инпуты.
+ */
+class Form {
+    protected inputs:Input[];
+    public element:JQuery;
+
+    constructor(protected name) {
+        this.element = this.createElement();
+    }
+
+    /**
+     * Добавить инпут.
+     *
+     * @param input
+     * @returns {Form}
+     */
+    protected addInput(input:Input) {
+        this.inputs.push(input);
+        this.getInputsHolder().append(input.element);
+        return this;
+    }
+
+    /**
+     * Создать элемент формы.
+     *
+     * @returns {JQuery}
+     */
+    protected createElement() {
+        return $(`
+            <div>
+                <div class="head">${this.name}</div>
+                <div class="inputs"></div>
+            </div>
+        `)
+    }
+
+    /**
+     * Получить элемент для хранения инпутов.
+     *
+     * @returns {JQuery}
+     */
+    protected getInputsHolder() {
+        return this.element.find('.inputs');
+    }
+}
+
+/**
+ * Форма ввода размеров шкафа.
+ */
+class CupboardForm extends Form {
+    constructor(protected cupboard:Cupboard) {
+        super('Шкаф');
+
+        for (var i = 0; i < 3; i++) {
+            this.addInput((new CupboardSizeInput(cupboard, i)));
+        }
+    }
+
 }

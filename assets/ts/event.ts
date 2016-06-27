@@ -1,51 +1,126 @@
 // В этом файле собраны классы для работы с событиями.
 
-import {
-    Camera,
-    Canvas
-} from "./common";
-
-import {
-    BigPlane,
-    Scene
-} from "./scene";
-
-import {
-    Object3D,
-    Vector2,
-    Intersection,
-    Raycaster
-} from "three";
+import {Camera, Canvas} from "./common";
+import {BigPlane} from "./scene";
+import {Object3D, Vector2, Intersection, Raycaster} from "three";
 
 /**
- * Обработчик событий.
+ * Реакция.
+ * Определяет, как объект будет реагировать на событие.
  */
-export abstract class EventHandler {
+export abstract class Reaction {
+    constructor(public event:EventType = null,
+                public object:Object3D = null,
+                public enabled = true) {
+    }
+
+    /**
+     * Активна ли реакция.
+     *
+     * @param enabled
+     * @returns {Reaction}
+     */
+    setEnabled(enabled:boolean) {
+        this.enabled = enabled;
+        return this;
+    }
+
     /**
      * Запустить обработчик.
      *
      * @param data
      */
-    abstract handle(data:EventData):void;
+    abstract react(data:Reason):void;
+
+    /**
+     * Соответсвует ли реакция причине.
+     *
+     * @param reason
+     * @returns {boolean}
+     */
+    fitsReason(reason:Reason) {
+        return reason.event == this.event && reason.object == this.object;
+    }
 }
 
 /**
- * Слушатель.
- * Связывает объект, события и действия при событиях.
+ * Набор реакций.
+ *
+ * Используется для того, чтобы:
+ * - Массово добавить / удалить реакции.
+ * - Массово включить / отключить реакции.
+ * - Массово вызывать реакции.
  */
-export abstract class ObjectListener {
+export class Reactions extends Reaction {
+    constructor(public event:EventType = null,
+                public object:Object3D = null,
+                public enabled = true) {
+        super(event, object, enabled);
+    }
+
     /**
-     * Начать прослушивание.
-     *
-     * @param enable
+     * Все реакции.
      */
-    abstract listen(enable:boolean):void;
+    protected all:Reaction[];
+
+    /** @inheritDoc */
+    setEnabled(enabled:boolean) {
+        this.all.forEach((one:Reaction) => {
+            one.setEnabled(enabled);
+        });
+        return super.setEnabled(enabled);
+    }
+
+    /**
+     * Добавить реакцию.
+     *
+     * @param reaction
+     */
+    add(reaction:Reaction) {
+        this.all.push(reaction);
+    }
+
+    /**
+     * Удаляем реакцию.
+     *
+     * @param one
+     */
+    remove(one:Reaction) {
+        this.all = this.all.filter((reaction) => reaction != one);
+    }
+
+    /**
+     * Вызвать реакцию.
+     *
+     * @param reason
+     */
+    cause(reason:Reason) {
+        this.all
+            .filter((reaction) => reaction.fitsReason(reason))
+            .forEach((reaction) => reaction.react(data);
+        return this;
+
+    }
+
+    /** @inheritDoc */
+    react(data:Reason) {
+        this.all.forEach((one:Reaction) => reaction.react(data));
+    }
+
+    /**
+     * Получить объекты.
+     * @param event
+     */
+    getObjects(event:EventType) {
+        // Получаем реакции по типу события и для каждой реакции получаем объект:
+        this.all.filter((reaction) => reaction.event == event).map((reaction) => reaction.object);
+    }
 }
 
 /**
  * Названия типов событий
  */
-export enum EventTypeEnum {
+export enum EventType {
     MouseDown,
     MouseUp,
     MouseMove,
@@ -80,362 +155,104 @@ class MouseRaycaster extends Raycaster {
     }
 }
 
-/**
- * Набор типов событий.
- */
-class EventTypes {
-    protected types:EventType[] = [];
-
-    /**
-     * Получить тип события по названию.
-     *
-     * @param name
-     * @returns {EventType}
-     */
-    get(name:EventTypeEnum):EventType {
-        for (let type of this.types) {
-            if (type.name == name) {
-                return type;
-            }
-        }
-        return null;
-    }
-
-    /**
-     * Добавить тип события
-     *
-     * @param eventType
-     * @returns {EventTypes}
-     */
-    add(eventType:EventType) {
-        this.types.push(eventType);
-
-        return this;
-    }
-
-    /**
-     * Выполнить все обработчики слушателя, связанные с указанным типом события и
-     *
-     * @param type
-     * @param object
-     * @param data
-     * @returns {EventTypes}
-     */
-    trigger(type:EventTypeEnum, object:Object3D, data:EventData = null) {
-        // Получаем слушателя:
-        let listener:Listener = this.getListener(type, object, false);
-
-        // Если слушателя нет, выходим:
-        if (!listener) {
-            return this;
-        }
-
-        // Вызываем обработчики с данными:
-        listener.trigger(data);
-
-        return this;
-    }
-
-    /**
-     * Получить слушателя, связанного с данным типом события и объектом.
-     *
-     * @param type
-     * @param object
-     * @param createIfNotFound Создать тип события и слушателя, если их нет.
-     * @returns {Listener}
-     */
-    protected getListener(type:EventTypeEnum, object:Object3D = null, createIfNotFound:boolean):Listener {
-        let eventType:EventType = this.get(type);
-        if (!eventType) {
-            if (!createIfNotFound) {
-                return null;
-            }
-            eventType = new EventType(type);
-            this.add(eventType);
-        }
-
-        let listener:Listener = eventType.getListener(object);
-        if (!listener) {
-            if (!createIfNotFound) {
-                return null;
-            }
-            listener = new Listener(object);
-            eventType.addListener(listener);
-        }
-
-        return listener;
-    }
-
-    /**
-     * Добавить обработчик события на объекте.
-     *
-     * @param type
-     * @param object
-     * @param handler
-     * @returns {EventTypes}
-     */
-    on(type:EventTypeEnum, object:Object3D, handler:EventHandler) {
-        // Получаем слушателя (или создаём его) и удаляем его обработчик:
-        this.getListener(type, object, true).addHandler(handler);
-        return this;
-    }
-
-    /**
-     * Убрать обработчик события с объекта.
-     *
-     * @param type
-     * @param object
-     * @param handler
-     * @returns {EventTypes}
-     */
-    off(type:EventTypeEnum, object:Object3D, handler:EventHandler) {
-        // Получаем слушателя события:
-        let listener = this.getListener(type, object, false);
-
-        // Слушателя нет - выходим:
-        if (!listener) {
-            return this;
-        }
-
-        // Удаляем у слушателя обработчик:
-        listener.removeHandler(handler);
-        return this;
-    }
-
-    getObjects(type:EventTypeEnum):Object3D[] {
-        // Получаем тип события, либо выходим:
-        let eventType = this.get(type);
-        if (!eventType) {
-            return [];
-        }
-
-        // Получаем объекты из типа события:
-        return eventType.getObjects();
-    }
-}
-
-/**
- * Тип события.
- * Содержит
- */
-class EventType {
-    protected listeners:Listener[] = [];
-
-    constructor(public name:EventTypeEnum) {
-    }
-
-    getListener(object:Object3D):Listener {
-        for (let listener of this.listeners) {
-            if (listener.object == object) {
-                return listener;
-            }
-        }
-        return null;
-    }
-
-    getObjects() {
-        let objects:Object3D[] = [];
-        for (let listener of this.listeners) {
-            objects.push(listener.object);
-        }
-        return objects;
-    }
-
-    addListener(listener:Listener) {
-        this.listeners.push(listener);
-        return this;
-    }
-}
-
-/**
- * Слушатель события.
- */
-class Listener {
-    protected handlers:EventHandler[] = [];
-
-
-    constructor(public object:Object3D = null) {
-    }
-
-    trigger(data:EventData) {
-        for (let handler of this.handlers) {
-            if (!handler) {
-                continue;
-            }
-            handler.handle(data);
-        }
-        return this;
-    }
-
-    addHandler(handler:EventHandler) {
-        this.handlers.push(handler);
-        return this;
-    }
-
-    removeHandler(handler:EventHandler) {
-        let index = this.handlers.indexOf(handler);
-        if (index == -1) {
-            return this;
-        }
-
-        this.handlers.splice(index, 1);
-        return this;
-    }
-}
-
-/**
- * Менеджер событий.
- * Управляет событиями.
- * Позволяет назначать их и убирать.
- */
-export class EventManager {
-    protected eventTypes:EventTypes = new EventTypes;
-    public mouse:MouseEventPasser;
-    public keyboard:KeyboardEventPasser;
-
-    /**
-     * Добавить обработчик события на объект.
-     *
-     * @param type
-     * @param object
-     * @param handler
-     * @returns {EventManager}
-     */
-    on(type:EventTypeEnum, object:Object3D, handler:EventHandler) {
-        this.eventTypes.on(type, object, handler);
-        if (MouseEventPasser.notEnterOrLeave(type)){
-            return this;
-        }
-        this.eventTypes.on(EventTypeEnum.MouseMove, object, null);
-        return this;
-    }
-
-    /**
-     * Убрать обработчик события с объекта.
-     *
-     * @param type
-     * @param object
-     * @param handler
-     * @returns {EventManager}
-     */
-    off(type:EventTypeEnum, object:Object3D, handler:EventHandler) {
-        this.eventTypes.off(type, object, handler);
-        return this;
-    }
-
-    /**
-     * Добавить / удалить обработчик события с объекта.
-     *
-     * @param type
-     * @param object
-     * @param handler
-     * @param add
-     * @returns {EventManager}
-     */
-    toggle(type:EventTypeEnum, object:Object3D, handler:EventHandler, add:boolean) {
-        add
-            ? this.on(type, object, handler)
-            : this.off(type, object, handler);
-
-        return this;
-    }
-
-    trigger(type:EventTypeEnum, data:EventData, object:Object3D = null) {
-        this.eventTypes.trigger(type, object, data);
-        return this;
-    }
-
-    triggerAll(type:EventTypeEnum, data:EventData, objectDataModifier:EventDataModifier) {
-        let objects = this.eventTypes.getObjects(type);
-        objects = objectDataModifier.modifyAll(data, objects);
-
-        for (let object of objects) {
-            objectDataModifier.modify(data, object);
-            if (data.skip) {
-                data.skip = false;
-                continue;
-            }
-            this.eventTypes.trigger(type, object, data);
-    
-            if (data.stop) {
-                data.stop = false;
-                break;
-            }
-        }
-
-        return this;
-    }
-}
 // EventPasser
 
 /**
- * Пробрасыватель событий в 3D-модель событий.
+ * Преобразовывает событие в реакцию.
  */
-export abstract class EventPasser {
-    constructor(protected eventManager:EventManager) {
-
+export abstract class EventReasonConverters {
+    constructor(protected reactions:Reactions) {
     }
 
+    /**
+     * Начать слушать за событиями.
+     */
     abstract listen():void;
 }
 
 /**
+ * Событие при касании
+ */
+type JQueryTouchEvent = {
+    originalEvent:TouchEvent,
+    preventDefault:()=>void
+};
+
+/**
  * Пробрасыватель событий мыши.
  */
-export class MouseEventPasser extends EventPasser {
+export class MouseReasonConverter extends EventReasonConverters {
+    /**
+     * Испускает луч от мыши в сторону объекта.
+     */
     protected raycaster:MouseRaycaster;
-    public plane:BigPlane;
-    protected dataModifier:MouseEventDataModifier;
 
-    constructor(protected canvas:Canvas, scene:Scene, protected camera:Camera, eventManager:EventManager) {
-        super(eventManager);
+    /**
+     * Изменяет причину реакции.
+     */
+    protected modifier:MouseReasonModifier;
+
+    /**
+     * Все пробрасыватели.
+     *
+     * @type {Array}
+     */
+    protected all:EventPasser[] = [];
+
+    constructor(protected canvas:Canvas,
+                public plane:BigPlane,
+                protected camera:Camera,
+                reactions:Reactions) {
+        super(reactions);
         this.raycaster = new MouseRaycaster(camera);
-        this.plane = scene.getClickPlane();
-        this.dataModifier = new MouseEventDataModifier(this);
+        this.modifier = new MouseReasonModifier(this);
+
+        let $canvas = this.canvas.getJQuery(),
+            $window = this.canvas.$window;
+
+        this.all = [
+            new MousePasser('mousedown', EventType.MouseDown, $canvas),
+            new MousePasser('mousemove', EventType.MouseMove, $canvas),
+            new MousePasser('mouseup', EventType.MouseUp, $canvas),
+            new TouchPasser('touchstart', EventType.MouseDown, $canvas),
+            new TouchPasser('touchmove', EventType.MouseMove, $canvas),
+            new TouchPasser('touchend', EventType.MouseUp, $canvas),
+            new WindowPasser('mouseup', EventType.MouseUpGlobal, $window),
+        ];
     }
 
     /**
      * Начинаем слушать события мыши и после каждого выполням наши обработчики.
      */
     listen() {
-        this.canvas.getJQuery().on({
-            'mousedown': this.passToTrigger(EventTypeEnum.MouseDown),
-            'mousemove': this.passToTrigger(EventTypeEnum.MouseMove),
-            'mouseup': this.passToTrigger(EventTypeEnum.MouseUp),
-            'touchstart': this.passTouchToTrigger(EventTypeEnum.MouseDown),
-            'touchmove': this.passTouchToTrigger(EventTypeEnum.MouseMove),
-            'touchend': this.passTouchToTrigger(EventTypeEnum.MouseUp),
+
+    }
+
+    /**
+     * Слушать события холста.
+     *
+     * @returns {MouseReasonConverter}
+     */
+    protected listenCanvas() {
+        return this.mapObjectEvents(this.canvas.getJQuery(), {
+            mousedown: EventType.MouseDown,
+            mousemove: EventType.MouseMove,
+            mouseup: EventType.MouseUp,
+            touchstart: EventType.MouseDown,
+            touchmove: EventType.MouseMove,
+            touchend: EventType.MouseUp,
         });
-
-        this.canvas.$window
-            .mouseup(this.passToTrigger(EventTypeEnum.MouseUpGlobal))
     }
 
     /**
-     * Позволяет пробросить событие из jQuery в наш trigger.
+     * Слушать события окна.
      *
-     * @param type
-     * @returns {function(JQueryMouseEventObject): void}
+     * @returns {MouseReasonConverter}
      */
-    protected passToTrigger(type:EventTypeEnum) {
-        return (event:JQueryMouseEventObject) => this.trigger(new Vector2(event.offsetX, event.offsetY), type);
-    }
-
-    /**
-     * Позволяет пробросить событие из jQuery в наш trigger.
-     *
-     * @param type
-     * @returns {function(JQueryMouseEventObject): void}
-     */
-    protected passTouchToTrigger(type:EventTypeEnum) {
-        return (event:{originalEvent:TouchEvent, preventDefault:()=>void}) => {
-            let touch:Touch = event.originalEvent.touches.item(0);
-            if (!touch) {
-                return;
-            }
-            this.trigger(new Vector2(touch.pageX, touch.pageY), type);
-            event.preventDefault();
-        }
+    protected listenWindow() {
+        return this.mapObjectEvents(this.canvas.$window, {
+            mouseup: EventType.MouseUpGlobal
+        });
     }
 
     /**
@@ -449,142 +266,334 @@ export class MouseEventPasser extends EventPasser {
     }
 
     /**
-     * Вызвать событие в EventManager
+     * Вызвать событие в Reactions
      *
      * @param mouse
      * @param type
      */
-    protected trigger(mouse:Vector2, type:EventTypeEnum):void {
-        // Получаем относительное положение мыши на канвасе
+    cause(mouse:Vector2, type:EventType):void {
+        // Получаем относительное положение мыши на канвасе:
         let position = this.canvas.getRelativePoint(mouse);
 
-        // Установить положение точки в испускателе лучей
+        // Установить положение точки в испускателе лучей:
         this.raycaster.setPosition(position);
 
-        // Событие
-        let data = new MouseEventData(type);
+        // Причина реакции:
+        let reason = new MouseReason(type, null, this.intersectMouseRay(this.plane));
 
-        // Установить пересечение с плоскостью
-        data.setPlaneIntersection(this.intersectMouseRay(this.plane));
+        // Вызвать реакцию для плоскости и отсутствия всяких объектов:
+        this.reactions
+            .cause(reason.setObject(this.plane))
+            .cause(reason.setObject(null));
 
-        // Если нужно, запускаем событие на плоскости.
-        if (this.shouldTriggerPlane(type)) {
-            this.eventManager.trigger(type, data, this.plane)
-        }
-
-        // Если нужно, запускаем событие без привязки к объекту.
-        if (this.shouldTriggerNull(type)) {
-            this.eventManager.trigger(type, data, null);
-        }
-
-        // Если нужно, запускаем событие с привязкой к объекту.
-        if (!this.shouldTriggerObject(type)) {
-            return;
-        }
-
-        // Получаем модификатор данных:
-        let modifier = this.dataModifier;
-
-        // Триггерим событие для всех объектов, найденных в менеджере событий:
-        this.eventManager.triggerAll(type, data, modifier);
+        // Вызвать все реакции:
+        this.causeAll(reason);
 
         // Не двигали мышью - выходим.
-        if (type != EventTypeEnum.MouseMove) {
+        if (type != EventType.MouseMove) {
             return;
         }
 
         // Запускаем обработчики для пересечений.
         this
-            .triggerIntersection(data, EventTypeEnum.MouseEnter, modifier.enterIntersection)
-            .triggerIntersection(data, EventTypeEnum.MouseLeave, modifier.leaveIntersection);
+            .triggerIntersection(reason, EventType.MouseEnter, this.modifier.enterIntersection)
+            .triggerIntersection(reason, EventType.MouseLeave, this.modifier.leaveIntersection);
 
         // Убираем пересечения.
-        modifier.enterIntersection = modifier.leaveIntersection = null;
+        this.modifier.enterIntersection = null;
+        this.modifier.leaveIntersection = null;
+    }
+
+    /**
+     * Вызвать все реакции.
+     *
+     * @param reason
+     * @returns {MouseReasonConverter}
+     */
+    protected causeAll(reason:MouseReason) {
+        let objects = this.reactions.getObjects(reason.event);
+
+        // Модифицируем список объектов:
+        objects = this.modifier.modifyAll(reason, objects);
+
+        // Для каждого объекат:
+        for (let object of objects) {
+            let breakIt = this.causeOne(object, reason);
+            if (breakIt === true) {
+                break;
+            }
+        }
+
+        return this;
+    }
+
+    protected causeOne(object:Object3D, reason:MouseReason){
+        // Модифицируем причину для каждого объекта:
+        this.modifier.modify(reason, object);
+
+        // Пропускаем вызов реакции:
+        if (reason.skip) {
+            reason.skip = false;
+            return;
+        }
+
+        // Установить объект реакции:
+        reason.object = object;
+
+        // Вызвать реакцию:
+        this.reactions.cause(reason);
+
+        // Продолжаем выполнение:
+        if (!reason.stop) {
+            return;
+        }
+
+        // Остановить дальнейшее выполнение:
+        reason.stop = false;
+        return true;
     }
 
     /**
      * Запустить обработчики для объектов, связанных с указанными пересечениями.
      *
-     * @param data
-     * @param type
+     * @param reason
+     * @param event
      * @param intersection
-     * @returns {MouseEventPasser}
+     * @returns {MouseReasonConverter}
      */
-    protected triggerIntersection(data:MouseEventData, type:EventTypeEnum, intersection:Intersection) {
+    protected triggerIntersection(reason:MouseReason, event:EventType, intersection:Intersection) {
         // Пересечения нет:
         if (!intersection) {
             return this;
         }
 
+        // Объект причины:
+        reason.object = intersection.object;
+
+        // Событие причины:
+        reason.event = event;
+
         // Запускаем событие для пересечения:
-        this.eventManager.trigger(type, data.setIntersection(intersection).setType(type), intersection.object);
+        this.reactions.cause(reason);
+
+        return this;
+    }
+}
+
+abstract class EventPasser{
+    protected callback;
+
+    constructor(
+        protected jqEvent:string,
+        protected event:EventType,
+        protected element:JQuery
+    ) {
+
+    }
+
+    listen(){
+        this.element.on(this.jqEvent, this.callback);
+    }
+
+    protected abstract getCallback(){
+        return this.callback;
+    }
+}
+
+class MousePasser extends EventPasser{
+    protected callback = (event:JQueryMouseEventObject) => {
+
+    };
+
+    protected abstract getCallback() {
+        return this.callback;
+    }
+}
+
+abstract class AbstractMouseEventMapper{
+    constructor(
+        protected object:JQuery,
+        protected map:{[key:string]:EventType},
+        protected mousePasser:MouseReasonConverter
+    ) {
+    }
+
+
+    /**
+     * Слушать события объекта.
+     *
+     * @param object
+     * @param map
+     * @returns {MouseReasonConverter}
+     */
+    protected apply(map:{[key:string]:EventType}) {
+        // События.
+        let events = {};
+
+        // Для каждого события.
+        for (let jquery:string in map) {
+            let type = events[jquery];
+
+            // Добавляем событие.
+            events[jquery] = this.getPasser(type);
+        }
+
+        // Навешиваем обработчики.
+        this.object.on(events);
+
         return this;
     }
 
-
     /**
-     * Нужно ли запускать
-     *
      * @param type
-     * @returns {boolean}
      */
-    protected shouldTriggerPlane(type:EventTypeEnum) {
-        return MouseEventPasser.notEnterOrLeave(type);
+    protected abstract getPasser(type:EventType);
+}
+
+class MouseEventMapper extends AbstractMouseEventMapper{
+    constructor(object:JQuery) {
+        super(object, {
+            mousedown: EventType.MouseDown,
+            mousemove: EventType.MouseMove,
+            mouseup: EventType.MouseUp,
+            touchstart: EventType.MouseDown,
+            touchmove: EventType.MouseMove,
+            touchend: EventType.MouseUp,
+        });
     }
 
     /**
-     * Событие не о наведении мыши и не об уведении её от объекта.
+     * Пробросить событие.
      *
-     * @returns {boolean}
+     * @param event
+     * @returns {function(JQueryMouseEventObject): void}
      */
-    public static notEnterOrLeave(type:EventTypeEnum) {
-        return [EventTypeEnum.MouseEnter, EventTypeEnum.MouseLeave].indexOf(type) == -1;
+    protected getPasser(event:EventType){
+        return (jqEvent:JQueryMouseEventObject) => {
+            // Положение мыши.
+            let mouse = this.getMouse(jqEvent);
+
+            // Выполняем событие.
+            this.mousePasser.trigger(mouse, event);
+        };
     }
 
     /**
-     * Нужно ли запускать событие без объекта.
+     * Получить положение мыши.
      *
-     * @param type
-     * @returns {boolean}
+     * @param jqEvent
      */
-    protected shouldTriggerNull(type:EventTypeEnum) {
-        return MouseEventPasser.notEnterOrLeave(type);
+    protected getMouse(jqEvent:JQueryMouseEventObject):Vector2{
+        new Vector2(jqEvent.offsetX, jqEvent.offsetY)
+    }
+}
+
+class SomePasser{
+
+
+    constructor(
+        protected mousePasser:passer
+    ) {
+    }
+
+    protected pass(jqEvent:JQueryMouseEventObject){
+        // Положение мыши.
+        let mouse = this.getMouse(jqEvent);
+
+        // Выполняем событие.
+        this.mousePasser.trigger(mouse, this.event);
     }
 
     /**
-     * Нужно ли запускать событие на объекте.
+     * Получить положение мыши.
      *
-     * @param type
-     * @returns {boolean}
+     * @param jqEvent
      */
-    protected shouldTriggerObject(type:EventTypeEnum) {
-        return true;
+    protected getMouse(jqEvent:JQueryMouseEventObject):Vector2{
+        new Vector2(jqEvent.offsetX, jqEvent.offsetY)
+    }
+}
+
+class TouchEventMapper extends AbstractMouseEventMapper{
+
+    constructor(object:JQuery) {
+        super(object, {
+            touchstart: EventType.MouseDown,
+            touchmove: EventType.MouseMove,
+            touchend: EventType.MouseUp,
+        });
+    }
+
+    /**
+     * Пробросить событие.
+     *
+     * @param event
+     * @returns {function(JQueryMouseEventObject): void}
+     */
+    protected pass(event:EventType){
+        return (jqEvent:JQueryTouchEvent) => {
+            // Предотвращаем дальнейшее выполнение:
+            jqEvent.preventDefault();
+
+            // Положение мыши.
+            let mouse = this.getMouse(jqEvent);
+
+            if (!mouse) {
+                return;
+            }
+
+            // Выполняем событие:
+            this.mousePasser.trigger(mouse, event);
+        };
+    }
+    /**
+     * Получить положение мыши.
+     *
+     * @param jqEvent
+     */
+    protected getMouse(event:JQueryTouchEvent):Vector2{
+        // Получаем первое касание:
+        let touch = event.originalEvent.touches.item(0);
+
+        // Получаем положение мыши.
+        new touch
+            ? Vector2(touch.pageX, touch.pageY)
+            : null;
     }
 }
 
 /**
  * Пробрасыватель событий клавиатуры.
  */
-export class KeyboardEventPasser extends EventPasser {
-    constructor(protected $window:JQuery, eventManager:EventManager) {
+export class KeyboardEventConverter extends EventReasonConverters {
+    constructor(protected $window:JQuery, eventManager:Reactions) {
         super(eventManager);
     }
 
     listen() {
         this.$window
-            .keydown(this.passToTrigger(EventTypeEnum.KeyDown))
-            .keyup(this.passToTrigger(EventTypeEnum.KeyUp))
+            .keydown(this.passToCause(EventType.KeyDown))
+            .keyup(this.passToCause(EventType.KeyUp))
     }
 
-    protected passToTrigger(type:EventTypeEnum) {
+    /**
+     * Пробросить событие в вызов реакции.
+     *
+     * @param type
+     * @returns {function(JQueryKeyEventObject): void}
+     */
+    protected passToCause(type:EventType) {
         return (event:JQueryKeyEventObject) => this.trigger(event, type);
     }
 
-    private trigger(event:JQueryKeyEventObject, type:EventTypeEnum) {
-        let data = new KeyBoardEventData(type);
-        data.jquery = event;
-        data.type = type;
-        this.eventManager.trigger(type, data);
+    /**
+     * Вызвать событие
+     * @param event
+     * @param type
+     */
+    private trigger(event:JQueryKeyEventObject, type:EventType) {
+        // Вызвать реакцию:
+        this.reactions.cause(type, new KeyboardReason(type, event));
     }
 }
 
@@ -628,16 +637,28 @@ interface TouchEvent extends UIEvent {
 }
 
 
-// EventData
+// Reason
 
 /**
- * Данные, передаваемые в событии.
+ * Причина, вызывающая реакцию.
  */
-export class EventData {
+export class Reason {
+    /**
+     * Проигнорировать причину.
+     *
+     * @type {boolean}
+     */
     public skip:boolean = false;
+
+    /**
+     * Предотвратить остальные причины.
+     *
+     * @type {boolean}
+     */
     public stop:boolean = false;
 
-    constructor(public type:EventTypeEnum) {
+    constructor(public event:EventType,
+                public object:Object3D = null) {
 
     }
 }
@@ -645,12 +666,22 @@ export class EventData {
 /**
  * Данные, передаваемые при нажатия мыши.
  */
-export class MouseEventData extends EventData {
+export class MouseReason extends Reason {
     protected intersection:Intersection;
     protected planeIntersection:Intersection;
 
-    // Установить пересечение мыши с плоскостью
-    setPlaneIntersection(planeIntersection:Intersection):MouseEventData {
+
+    constructor(
+        event:EventType,
+        object:THREE.Object3D,
+        planeIntersection:THREE.Intersection = null
+    ) {
+        super(event, object);
+        this.planeIntersection = planeIntersection;
+    }
+
+// Установить пересечение мыши с плоскостью
+    setPlaneIntersection(planeIntersection:Intersection):MouseReason {
         this.planeIntersection = planeIntersection;
         return this;
     }
@@ -664,9 +695,9 @@ export class MouseEventData extends EventData {
      * Установить пересечение.
      *
      * @param intersection
-     * @returns {MouseEventData}
+     * @returns {MouseReason}
      */
-    setIntersection(intersection:Intersection):MouseEventData {
+    setIntersection(intersection:Intersection):MouseReason {
         this.intersection = intersection;
         return this;
     }
@@ -675,10 +706,15 @@ export class MouseEventData extends EventData {
      * Установить тип данных.
      *
      * @param type
-     * @returns {MouseEventData}
+     * @returns {MouseReason}
      */
-    setType(type:EventTypeEnum){
-        this.type = type;
+    setType(type:EventType) {
+        this.event = type;
+        return this;
+    }
+
+    setObject(object:Object3D) {
+        this.object = object;
         return this;
     }
 }
@@ -686,27 +722,28 @@ export class MouseEventData extends EventData {
 /**
  * Данные, передаваемые при нажатии на кнопку клавиатуры.
  */
-export class KeyBoardEventData extends EventData {
-    public code:KeyCodeEnum;
-    public down:boolean;
-    public jquery:JQueryKeyEventObject;
-    public type:EventTypeEnum;
+export class KeyboardReason extends Reason {
+    constructor(event:EventType,
+                object:Object3D,
+                public jquery:JQueryKeyEventObject,) {
+        super(event, object);
+    }
 }
 
 
-// EventData\Modifier
+// ReasonModifier
 
 /**
  * Модифицирует данные, передаваемые объекту в событии.
  */
-abstract class EventDataModifier {
+abstract class ReasonModifier {
     /**
      * Модифицировать конкретный объект.
      *
      * @param data
      * @param object
      */
-    abstract modify(data:EventData, object:Object3D):EventData;
+    abstract modify(data:Reason, object:Object3D):Reason;
 
     /**
      * Модифицировать все объекты данного типа.
@@ -714,13 +751,13 @@ abstract class EventDataModifier {
      * @param data
      * @param objects
      */
-    abstract modifyAll(data:EventData, objects:Object3D[]):Object3D[];
+    abstract modifyAll(data:Reason, objects:Object3D[]):Object3D[];
 }
 
 /**
  * Модифицирует данные, передаваемые объекту в событии мыши.
  */
-class MouseEventDataModifier extends EventDataModifier {
+class MouseReasonModifier extends ReasonModifier {
     /**
      * Пересечения с мышью.
      *
@@ -743,16 +780,16 @@ class MouseEventDataModifier extends EventDataModifier {
      */
     protected previousFirstIntersection:Intersection;
 
-    constructor(protected mouseEvents:MouseEventPasser) {
+    constructor(protected mouseEvents:MouseReasonConverter) {
         super();
     }
 
     /** @inheritDoc */
-    modify(data:MouseEventData, object:Object3D) {
+    modify(reason:MouseReason, object:Object3D) {
         // Объекта нет - пропускаем.
         if (!object) {
-            data.skip = true;
-            return data;
+            reason.skip = true;
+            return reason;
         }
 
         // Получаем пересечение с мышью:
@@ -760,13 +797,13 @@ class MouseEventDataModifier extends EventDataModifier {
 
         // Пересечения нет - пропускаем.
         if (!intersection) {
-            data.skip = true;
-            return data;
+            reason.skip = true;
+            return reason;
         }
 
         // Добавить данные о пересечении в объект события.
-        data.setIntersection(intersection);
-        return data;
+        reason.setIntersection(intersection);
+        return reason;
     }
 
     /**
@@ -786,7 +823,7 @@ class MouseEventDataModifier extends EventDataModifier {
     }
 
     /** @inheritDoc */
-    modifyAll(data:EventData, objects:Object3D[]):Object3D[] {
+    modifyAll(data:Reason, objects:Object3D[]):Object3D[] {
         // Устанавливаем пересечения и вовзвращаем их объекты:
         return this.setObjectsIntersections(objects).map((intersection:Intersection) => intersection.object);
     }
@@ -859,7 +896,7 @@ class MouseEventDataModifier extends EventDataModifier {
      *
      * @returns {Intersection}
      */
-    protected getFirstIntersection(): Intersection{
+    protected getFirstIntersection():Intersection {
         let intersection = this.intersections[0];
         if (!intersection || !intersection.object) {
             return intersection;
