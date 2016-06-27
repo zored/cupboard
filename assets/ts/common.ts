@@ -1,8 +1,8 @@
 import {
     EventManager,
-    MouseReasonConverter,
-    KeyboardEventConverter,
-    EventReasonConverters,
+    MousePassers,
+    KeyboardPassers,
+    EventPassers,
 } from "./event";
 
 import {
@@ -49,13 +49,13 @@ export class World {
         this.renderer = new Renderer(canvas);
         this.camera = new Camera(canvas);
         this.eventManager = new EventManager();
-        this.eventManager.mouse = new MouseReasonConverter(canvas, this.scene.getClickPlane(), this.camera, this.eventManager);
-        this.eventManager.keyboard = new KeyboardEventConverter(canvas.$window, this.eventManager);
+        this.eventManager.mouse = new MousePassers(canvas, this.scene.getClickPlane(), this.camera, this.eventManager);
+        this.eventManager.keyboard = new KeyboardPassers(canvas.$window, this.eventManager);
 
         [
             this.eventManager.mouse,
             this.eventManager.keyboard
-        ].forEach((passer:EventReasonConverters) => passer.listen());
+        ].forEach((passer:EventPassers) => passer.listen());
 
         // Заполняем сцену объектами
         this.scene.fill(this.eventManager);

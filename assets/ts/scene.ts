@@ -37,7 +37,6 @@ import {
     DoorState,
     DoorDirection, DoorsCoordinateLimitChecker
 } from "./handlers";
-import {SectionsAmountInput} from "./form";
 
 /**
  * Сцена.

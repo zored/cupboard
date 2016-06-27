@@ -28,19 +28,9 @@ export abstract class Reaction {
     /**
      * Запустить обработчик.
      *
-     * @param data
-     */
-    abstract react(data:Reason):void;
-
-    /**
-     * Соответсвует ли реакция причине.
-     *
      * @param reason
-     * @returns {boolean}
      */
-    fitsReason(reason:Reason) {
-        return reason.event == this.event && reason.object == this.object;
-    }
+    abstract react(reason:Reason):void;
 }
 
 /**
@@ -96,15 +86,16 @@ export class Reactions extends Reaction {
      */
     cause(reason:Reason) {
         this.all
-            .filter((reaction) => reaction.fitsReason(reason))
-            .forEach((reaction) => reaction.react(data);
-        return this;
+            .filter((reaction) => reason.event == reaction.event && reason.object == reaction.object)
+            .forEach((reaction) => reaction.react(reason));
 
+        return this;
     }
 
     /** @inheritDoc */
-    react(data:Reason) {
-        this.all.forEach((one:Reaction) => reaction.react(data));
+    react(reason:Reason) {
+        // Вызвать реакцию:
+        this.all.forEach((one) => one.react(reason));
     }
 
     /**
@@ -114,6 +105,64 @@ export class Reactions extends Reaction {
     getObjects(event:EventType) {
         // Получаем реакции по типу события и для каждой реакции получаем объект:
         this.all.filter((reaction) => reaction.event == event).map((reaction) => reaction.object);
+    }
+
+    /**
+     * Вызвать все реакции.
+     *
+     * @param reason
+     * @param modifier
+     * @returns {MousePassers}
+     */
+    causeAll(reason:Reason, modifier:ReasonModifier) {
+        // Получаем объекты:
+        let objects = this.getObjects(reason.event);
+
+        // Модифицируем список объектов:
+        objects = modifier.modifyAll(reason, objects);
+
+        // Для каждого объекат:
+        for (let object of objects) {
+            // Устанавливаем объект для причины:
+            reason.setObject(object);
+
+            // Вызываем реакцию для одного объекта:
+            if (this.causeWithModifier(reason) === true) {
+                break;
+            }
+        }
+
+        return this;
+    }
+
+    /**
+     * Вызвать реакцию для одного объекта с модиикатором:
+     *
+     * @param reason
+     * @param modifier
+     * @returns {boolean}
+     */
+    protected causeWithModifier(reason:MouseReason, modifier:ReasonModifier) {
+        // Модифицируем причину для каждого объекта:
+        modifier.modify(reason);
+
+        // Пропускаем вызов реакции:
+        if (reason.skip) {
+            reason.skip = false;
+            return;
+        }
+
+        // Вызвать реакцию:
+        this.cause(reason);
+
+        // Продолжаем выполнение:
+        if (!reason.stop) {
+            return;
+        }
+
+        // Остановить дальнейшее выполнение:
+        reason.stop = false;
+        return true;
     }
 }
 
@@ -153,6 +202,16 @@ class MouseRaycaster extends Raycaster {
         this.setFromCamera(position, this.camera);
         return this;
     }
+
+    /**
+     * Получить первое пересечение с объектом.
+     *
+     * @param object
+     * @returns {Intersection}
+     */
+    getFirstIntersection(object:Object3D):Intersection {
+        return this.intersectObject(object)[0];
+    }
 }
 
 // EventPasser
@@ -160,37 +219,9 @@ class MouseRaycaster extends Raycaster {
 /**
  * Преобразовывает событие в реакцию.
  */
-export abstract class EventReasonConverters {
+export abstract class EventPassers {
     constructor(protected reactions:Reactions) {
     }
-
-    /**
-     * Начать слушать за событиями.
-     */
-    abstract listen():void;
-}
-
-/**
- * Событие при касании
- */
-type JQueryTouchEvent = {
-    originalEvent:TouchEvent,
-    preventDefault:()=>void
-};
-
-/**
- * Пробрасыватель событий мыши.
- */
-export class MouseReasonConverter extends EventReasonConverters {
-    /**
-     * Испускает луч от мыши в сторону объекта.
-     */
-    protected raycaster:MouseRaycaster;
-
-    /**
-     * Изменяет причину реакции.
-     */
-    protected modifier:MouseReasonModifier;
 
     /**
      * Все пробрасыватели.
@@ -199,401 +230,231 @@ export class MouseReasonConverter extends EventReasonConverters {
      */
     protected all:EventPasser[] = [];
 
+    /**
+     * Начать слушать за событиями.
+     */
+    listen() {
+        // Прослушиваем каждый пробрасыватель:
+        this.all.forEach((passer) => passer.setPassers(this).listen());
+
+        return this;
+    }
+
+    /**
+     * Вызвать реакцию для причины:
+     *
+     * @param reason
+     */
+    cause(reason:Reason) {
+        this.reactions.cause(reason);
+    }
+}
+
+/**
+ * Пробрасыватель событий мыши.
+ */
+export class MousePassers extends EventPassers {
+    /**
+     * Испускает луч от мыши в сторону объекта.
+     */
+    public raycaster:MouseRaycaster;
+
+    /**
+     * Изменяет причину реакции.
+     */
+    protected modifier:MouseModifier;
+
     constructor(protected canvas:Canvas,
                 public plane:BigPlane,
                 protected camera:Camera,
                 reactions:Reactions) {
         super(reactions);
         this.raycaster = new MouseRaycaster(camera);
-        this.modifier = new MouseReasonModifier(this);
+        this.modifier = new MouseModifier(this);
 
         let $canvas = this.canvas.getJQuery(),
             $window = this.canvas.$window;
 
+        // Устанавливаем все прокидыватели событий:
         this.all = [
             new MousePasser('mousedown', EventType.MouseDown, $canvas),
             new MousePasser('mousemove', EventType.MouseMove, $canvas),
             new MousePasser('mouseup', EventType.MouseUp, $canvas),
+            new MousePasser('mouseup', EventType.MouseUpGlobal, $window),
             new TouchPasser('touchstart', EventType.MouseDown, $canvas),
             new TouchPasser('touchmove', EventType.MouseMove, $canvas),
             new TouchPasser('touchend', EventType.MouseUp, $canvas),
-            new WindowPasser('mouseup', EventType.MouseUpGlobal, $window),
         ];
     }
 
-    /**
-     * Начинаем слушать события мыши и после каждого выполням наши обработчики.
-     */
-    listen() {
-
-    }
-
-    /**
-     * Слушать события холста.
-     *
-     * @returns {MouseReasonConverter}
-     */
-    protected listenCanvas() {
-        return this.mapObjectEvents(this.canvas.getJQuery(), {
-            mousedown: EventType.MouseDown,
-            mousemove: EventType.MouseMove,
-            mouseup: EventType.MouseUp,
-            touchstart: EventType.MouseDown,
-            touchmove: EventType.MouseMove,
-            touchend: EventType.MouseUp,
-        });
-    }
-
-    /**
-     * Слушать события окна.
-     *
-     * @returns {MouseReasonConverter}
-     */
-    protected listenWindow() {
-        return this.mapObjectEvents(this.canvas.$window, {
-            mouseup: EventType.MouseUpGlobal
-        });
-    }
-
-    /**
-     * Получить первое пересечение луча мыши с объектом:
-     *
-     * @param object
-     * @returns {Intersection}
-     */
-    intersectMouseRay(object:Object3D):Intersection {
-        return this.raycaster.intersectObject(object)[0];
-    }
 
     /**
      * Вызвать событие в Reactions
      *
-     * @param mouse
-     * @param type
+     * @param reason
      */
-    cause(mouse:Vector2, type:EventType):void {
+    cause(reason:MouseReason):void {
         // Получаем относительное положение мыши на канвасе:
-        let position = this.canvas.getRelativePoint(mouse);
+        let position = this.canvas.getRelativePoint(reason.mouse);
 
         // Установить положение точки в испускателе лучей:
         this.raycaster.setPosition(position);
 
-        // Причина реакции:
-        let reason = new MouseReason(type, null, this.intersectMouseRay(this.plane));
+        // Пересечение мыши с плоскостью:
+        let planeIntersection = this.raycaster.getFirstIntersection(this.plane);
+
+        // Устанавливаем пересечение мыши с большой плоскостью:
+        reason.setPlaneIntersection(planeIntersection);
 
         // Вызвать реакцию для плоскости и отсутствия всяких объектов:
         this.reactions
             .cause(reason.setObject(this.plane))
-            .cause(reason.setObject(null));
+            .cause(reason.setObject(null))
+            .causeAll(reason, this.modifier);
 
-        // Вызвать все реакции:
-        this.causeAll(reason);
-
-        // Не двигали мышью - выходим.
-        if (type != EventType.MouseMove) {
+        // Мышь не двигали:
+        if (reason.event != EventType.MouseMove) {
             return;
         }
 
-        // Запускаем обработчики для пересечений.
-        this
-            .triggerIntersection(reason, EventType.MouseEnter, this.modifier.enterIntersection)
-            .triggerIntersection(reason, EventType.MouseLeave, this.modifier.leaveIntersection);
+        // Проверим наведение и увод мыши:
+        this.causeEnterAndLeave(reason);
+    }
+
+    /**
+     * Вызвать реакцию на движение мыши.
+     *
+     * @param reason
+     */
+    protected causeEnterAndLeave(reason:Reason) {
+        // Если есть объект, на котороый навели мышь — вызываем для него реакцию с данным объектом:
+        [
+            this.modifier.enterIntersection,
+            this.modifier.leaveIntersection
+        ].forEach((intersection) => intersection && this.reactions.cause(reason.setObject(intersection.object)));
 
         // Убираем пересечения.
         this.modifier.enterIntersection = null;
         this.modifier.leaveIntersection = null;
     }
+}
+
+/**
+ * Пробрасыватель событий.
+ * Прокидывает jQuery-событие в реакции.
+ */
+abstract class EventPasser {
+    /**
+     * Хранилище пробрасывателей, которому принадлежит объект.
+     */
+    public passers:EventPassers;
+
+    constructor(protected jqEvent:string,
+                protected event:EventType,
+                protected element:JQuery) {
+    }
 
     /**
-     * Вызвать все реакции.
-     *
-     * @param reason
-     * @returns {MouseReasonConverter}
+     * Слушаем событие:
      */
-    protected causeAll(reason:MouseReason) {
-        let objects = this.reactions.getObjects(reason.event);
+    listen() {
+        this.element.on(this.jqEvent, this.causeReason);
+    }
 
-        // Модифицируем список объектов:
-        objects = this.modifier.modifyAll(reason, objects);
-
-        // Для каждого объекат:
-        for (let object of objects) {
-            let breakIt = this.causeOne(object, reason);
-            if (breakIt === true) {
-                break;
-            }
-        }
+    /**
+     * Установить родительский набор
+     * @param passers
+     * @returns {EventPasser}
+     */
+    setPassers(passers:EventPassers) {
+        this.passers = passers;
 
         return this;
     }
 
-    protected causeOne(object:Object3D, reason:MouseReason){
-        // Модифицируем причину для каждого объекта:
-        this.modifier.modify(reason, object);
-
-        // Пропускаем вызов реакции:
-        if (reason.skip) {
-            reason.skip = false;
-            return;
-        }
-
-        // Установить объект реакции:
-        reason.object = object;
-
-        // Вызвать реакцию:
-        this.reactions.cause(reason);
-
-        // Продолжаем выполнение:
-        if (!reason.stop) {
-            return;
-        }
-
-        // Остановить дальнейшее выполнение:
-        reason.stop = false;
-        return true;
-    }
 
     /**
-     * Запустить обработчики для объектов, связанных с указанными пересечениями.
+     * Вызвать реакцию.
      *
-     * @param reason
      * @param event
-     * @param intersection
-     * @returns {MouseReasonConverter}
      */
-    protected triggerIntersection(reason:MouseReason, event:EventType, intersection:Intersection) {
-        // Пересечения нет:
-        if (!intersection) {
-            return this;
-        }
-
-        // Объект причины:
-        reason.object = intersection.object;
-
-        // Событие причины:
-        reason.event = event;
-
-        // Запускаем событие для пересечения:
-        this.reactions.cause(reason);
-
-        return this;
-    }
-}
-
-abstract class EventPasser{
-    protected callback;
-
-    constructor(
-        protected jqEvent:string,
-        protected event:EventType,
-        protected element:JQuery
-    ) {
-
-    }
-
-    listen(){
-        this.element.on(this.jqEvent, this.callback);
-    }
-
-    protected abstract getCallback(){
-        return this.callback;
-    }
-}
-
-class MousePasser extends EventPasser{
-    protected callback = (event:JQueryMouseEventObject) => {
-
+    protected causeReason = (event:Event) => {
+        // Вызываем реакцию:
+        this.passers.cause(this.getReason(event));
     };
 
-    protected abstract getCallback() {
-        return this.callback;
+    /**
+     * Получить причину для реакции.
+     *
+     * @param jqEvent
+     */
+    protected abstract getReason(jqEvent:Event);
+}
+
+/**
+ * Преобразовывает события мыши.
+ */
+class MousePasser extends EventPasser {
+    /** @inheritDoc */
+    protected getReason(jqEvent:JQueryMouseEventObject) {
+        // Создаём причину:
+        let reason = new MouseReason(this.event);
+
+        // Положение мыши:
+        reason.mouse = new Vector2(jqEvent.offsetX, jqEvent.offsetY);
+
+        // Возвращаем:
+        return reason;
     }
 }
 
-abstract class AbstractMouseEventMapper{
-    constructor(
-        protected object:JQuery,
-        protected map:{[key:string]:EventType},
-        protected mousePasser:MouseReasonConverter
-    ) {
-    }
+/**
+ * Пробрасывает касание:
+ */
+class TouchPasser extends EventPasser {
+    /** @inheritDoc */
+    protected getReason(jqEvent:JQueryTouchEvent) {
+        // Получаем первое касание:
+        let touch = jqEvent.originalEvent.touches.item(0);
 
-
-    /**
-     * Слушать события объекта.
-     *
-     * @param object
-     * @param map
-     * @returns {MouseReasonConverter}
-     */
-    protected apply(map:{[key:string]:EventType}) {
-        // События.
-        let events = {};
-
-        // Для каждого события.
-        for (let jquery:string in map) {
-            let type = events[jquery];
-
-            // Добавляем событие.
-            events[jquery] = this.getPasser(type);
+        // Касания нет:
+        if (!touch) {
+            return null;
         }
 
-        // Навешиваем обработчики.
-        this.object.on(events);
+        // Создаём причину:
+        let reason = new MouseReason(this.event);
 
-        return this;
-    }
+        // Положение касания:
+        reason.mouse = new Vector2(touch.pageX, touch.pageY);
 
-    /**
-     * @param type
-     */
-    protected abstract getPasser(type:EventType);
-}
-
-class MouseEventMapper extends AbstractMouseEventMapper{
-    constructor(object:JQuery) {
-        super(object, {
-            mousedown: EventType.MouseDown,
-            mousemove: EventType.MouseMove,
-            mouseup: EventType.MouseUp,
-            touchstart: EventType.MouseDown,
-            touchmove: EventType.MouseMove,
-            touchend: EventType.MouseUp,
-        });
-    }
-
-    /**
-     * Пробросить событие.
-     *
-     * @param event
-     * @returns {function(JQueryMouseEventObject): void}
-     */
-    protected getPasser(event:EventType){
-        return (jqEvent:JQueryMouseEventObject) => {
-            // Положение мыши.
-            let mouse = this.getMouse(jqEvent);
-
-            // Выполняем событие.
-            this.mousePasser.trigger(mouse, event);
-        };
-    }
-
-    /**
-     * Получить положение мыши.
-     *
-     * @param jqEvent
-     */
-    protected getMouse(jqEvent:JQueryMouseEventObject):Vector2{
-        new Vector2(jqEvent.offsetX, jqEvent.offsetY)
+        // Возвращаем причину:
+        return reason;
     }
 }
 
-class SomePasser{
-
-
-    constructor(
-        protected mousePasser:passer
-    ) {
-    }
-
-    protected pass(jqEvent:JQueryMouseEventObject){
-        // Положение мыши.
-        let mouse = this.getMouse(jqEvent);
-
-        // Выполняем событие.
-        this.mousePasser.trigger(mouse, this.event);
-    }
-
-    /**
-     * Получить положение мыши.
-     *
-     * @param jqEvent
-     */
-    protected getMouse(jqEvent:JQueryMouseEventObject):Vector2{
-        new Vector2(jqEvent.offsetX, jqEvent.offsetY)
-    }
-}
-
-class TouchEventMapper extends AbstractMouseEventMapper{
-
-    constructor(object:JQuery) {
-        super(object, {
-            touchstart: EventType.MouseDown,
-            touchmove: EventType.MouseMove,
-            touchend: EventType.MouseUp,
-        });
-    }
-
-    /**
-     * Пробросить событие.
-     *
-     * @param event
-     * @returns {function(JQueryMouseEventObject): void}
-     */
-    protected pass(event:EventType){
-        return (jqEvent:JQueryTouchEvent) => {
-            // Предотвращаем дальнейшее выполнение:
-            jqEvent.preventDefault();
-
-            // Положение мыши.
-            let mouse = this.getMouse(jqEvent);
-
-            if (!mouse) {
-                return;
-            }
-
-            // Выполняем событие:
-            this.mousePasser.trigger(mouse, event);
-        };
-    }
-    /**
-     * Получить положение мыши.
-     *
-     * @param jqEvent
-     */
-    protected getMouse(event:JQueryTouchEvent):Vector2{
-        // Получаем первое касание:
-        let touch = event.originalEvent.touches.item(0);
-
-        // Получаем положение мыши.
-        new touch
-            ? Vector2(touch.pageX, touch.pageY)
-            : null;
+/**
+ * Преобразовывает события мыши.
+ */
+class KeyboardPasser extends EventPasser {
+    /** @inheritDoc */
+    protected getReason(jqEvent:JQueryKeyEventObject) {
+        // Создаём причину:
+        return new KeyboardReason(this.event, null, jqEvent);
     }
 }
 
 /**
  * Пробрасыватель событий клавиатуры.
  */
-export class KeyboardEventConverter extends EventReasonConverters {
+export class KeyboardPassers extends EventPassers {
     constructor(protected $window:JQuery, eventManager:Reactions) {
         super(eventManager);
-    }
 
-    listen() {
-        this.$window
-            .keydown(this.passToCause(EventType.KeyDown))
-            .keyup(this.passToCause(EventType.KeyUp))
-    }
-
-    /**
-     * Пробросить событие в вызов реакции.
-     *
-     * @param type
-     * @returns {function(JQueryKeyEventObject): void}
-     */
-    protected passToCause(type:EventType) {
-        return (event:JQueryKeyEventObject) => this.trigger(event, type);
-    }
-
-    /**
-     * Вызвать событие
-     * @param event
-     * @param type
-     */
-    private trigger(event:JQueryKeyEventObject, type:EventType) {
-        // Вызвать реакцию:
-        this.reactions.cause(type, new KeyboardReason(type, event));
+        this.all = [
+            new KeyboardPasser('keydown', EventType.KeyDown, $window),
+            new KeyboardPasser('keyup', EventType.KeyUp, $window),
+        ];
     }
 }
 
@@ -636,6 +497,14 @@ interface TouchEvent extends UIEvent {
     shiftKey:boolean;
 }
 
+/**
+ * Событие при касании
+ */
+interface JQueryTouchEvent extends Event {
+    originalEvent:TouchEvent,
+    preventDefault:()=>void
+}
+
 
 // Reason
 
@@ -661,6 +530,27 @@ export class Reason {
                 public object:Object3D = null) {
 
     }
+
+    /**
+     * Установить объект.
+     *
+     * @param object
+     */
+    setObject(object:Object3D) {
+        this.object = object;
+        return this;
+    }
+
+    /**
+     * Установить событие.
+     *
+     * @param event
+     * @returns {Reason}
+     */
+    setEvent(event:EventType) {
+        this.event = event;
+        return this;
+    }
 }
 
 /**
@@ -669,18 +559,16 @@ export class Reason {
 export class MouseReason extends Reason {
     protected intersection:Intersection;
     protected planeIntersection:Intersection;
+    public mouse:Vector2;
 
-
-    constructor(
-        event:EventType,
-        object:THREE.Object3D,
-        planeIntersection:THREE.Intersection = null
-    ) {
+    constructor(event:EventType,
+                object:THREE.Object3D = null,
+                planeIntersection:THREE.Intersection = null) {
         super(event, object);
         this.planeIntersection = planeIntersection;
     }
 
-// Установить пересечение мыши с плоскостью
+    // Установить пересечение мыши с плоскостью
     setPlaneIntersection(planeIntersection:Intersection):MouseReason {
         this.planeIntersection = planeIntersection;
         return this;
@@ -701,22 +589,6 @@ export class MouseReason extends Reason {
         this.intersection = intersection;
         return this;
     }
-
-    /**
-     * Установить тип данных.
-     *
-     * @param type
-     * @returns {MouseReason}
-     */
-    setType(type:EventType) {
-        this.event = type;
-        return this;
-    }
-
-    setObject(object:Object3D) {
-        this.object = object;
-        return this;
-    }
 }
 
 /**
@@ -725,7 +597,7 @@ export class MouseReason extends Reason {
 export class KeyboardReason extends Reason {
     constructor(event:EventType,
                 object:Object3D,
-                public jquery:JQueryKeyEventObject,) {
+                public jquery:JQueryKeyEventObject) {
         super(event, object);
     }
 }
@@ -741,23 +613,22 @@ abstract class ReasonModifier {
      * Модифицировать конкретный объект.
      *
      * @param data
-     * @param object
      */
-    abstract modify(data:Reason, object:Object3D):Reason;
+    abstract modify(data:Reason):Reason;
 
     /**
      * Модифицировать все объекты данного типа.
      *
-     * @param data
+     * @param reason
      * @param objects
      */
-    abstract modifyAll(data:Reason, objects:Object3D[]):Object3D[];
+    abstract modifyAll(reason:Reason, objects:Object3D[]):Object3D[];
 }
 
 /**
  * Модифицирует данные, передаваемые объекту в событии мыши.
  */
-class MouseReasonModifier extends ReasonModifier {
+class MouseModifier extends ReasonModifier {
     /**
      * Пересечения с мышью.
      *
@@ -780,20 +651,20 @@ class MouseReasonModifier extends ReasonModifier {
      */
     protected previousFirstIntersection:Intersection;
 
-    constructor(protected mouseEvents:MouseReasonConverter) {
+    constructor(protected mouseEvents:MousePassers) {
         super();
     }
 
     /** @inheritDoc */
-    modify(reason:MouseReason, object:Object3D) {
+    modify(reason:MouseReason) {
         // Объекта нет - пропускаем.
-        if (!object) {
+        if (!reason.object) {
             reason.skip = true;
             return reason;
         }
 
         // Получаем пересечение с мышью:
-        let intersection = this.getIntersectionByObject(object);
+        let intersection = this.getIntersectionByObject(reason.object);
 
         // Пересечения нет - пропускаем.
         if (!intersection) {
@@ -813,13 +684,7 @@ class MouseReasonModifier extends ReasonModifier {
      * @returns {Intersection}
      */
     protected getIntersectionByObject(object:Object3D):Intersection {
-        for (let intersection of this.intersections) {
-            if (intersection.object == object) {
-                return intersection;
-            }
-        }
-
-        return undefined;
+        return this.intersections.filter((intersection) => intersection.object == object)[0];
     }
 
     /** @inheritDoc */
@@ -844,7 +709,7 @@ class MouseReasonModifier extends ReasonModifier {
             }
 
             // Получаем пересечение:
-            let intersection = this.mouseEvents.intersectMouseRay(object);
+            let intersection = this.mouseEvents.raycaster.getFirstIntersection(object);
 
             // Пересечения нет или нет точки пересечения:
             if (!intersection || !intersection.point) {
