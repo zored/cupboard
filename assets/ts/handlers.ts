@@ -21,7 +21,7 @@ import {
 
 import {
     CupboardHandlerSet,
-    SectionsListener
+    SectionsReactions
 } from "./listeners";
 
 import {
@@ -551,7 +551,7 @@ export class SectionSizeInputHandler extends ObjectSizeInputHandler{
  * Обработчик для установки размера шкафа из поля ввода.
  */
 export class SectionAmountInputHandler extends InputHandler{
-    constructor(protected sectionsListener:SectionsListener) {
+    constructor(protected sectionsListener:SectionsReactions) {
         super();
     }
 

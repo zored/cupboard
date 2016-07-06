@@ -2,7 +2,7 @@ import {
     EventManager,
     MousePassers,
     KeyboardPassers,
-    EventPassers,
+    EventPassers, Reactions,
 } from "./event";
 
 import {
@@ -38,27 +38,47 @@ export enum Coordinate {
  * Мир, в котором всё происходит.
  */
 export class World {
+    /**
+     * Рендер.
+     */
     protected renderer:Renderer;
+    
+    /**
+     * Сцена.
+     */
     protected scene:Scene;
+    
+    /**
+     * Камера.
+     */
     protected camera:Camera;
+    
+    /**
+     * Активен ли рендер.
+     * @type {boolean}
+     */
     protected active:boolean = true;
-    protected eventManager:EventManager;
+
+    /**
+     * Реакции объектов на сцене.
+     */
+    protected reactions:Reactions;
 
     constructor(protected canvas:Canvas) {
+        // Создаём объекты:
         this.scene = new Scene();
         this.renderer = new Renderer(canvas);
         this.camera = new Camera(canvas);
-        this.eventManager = new EventManager();
-        this.eventManager.mouse = new MousePassers(canvas, this.scene.getClickPlane(), this.camera, this.eventManager);
-        this.eventManager.keyboard = new KeyboardPassers(canvas.$window, this.eventManager);
-
+        this.reactions = new Reactions();
+        
+        // Пробрасываем события мыши и клавиатуры в реакции.
         [
-            this.eventManager.mouse,
-            this.eventManager.keyboard
-        ].forEach((passer:EventPassers) => passer.listen());
+            new MousePassers(canvas, this.scene.getClickPlane(), this.camera, this.reactions),
+            new KeyboardPassers(canvas.$window, this.reactions)
+        ].forEach((passers:EventPassers) => passers.listen());
 
         // Заполняем сцену объектами
-        this.scene.fill(this.eventManager);
+        this.scene.fill().fillReactions(this.reactions);
 
         for(var i=0; i<3; i++) {
             let size = this.scene.cupboard.size.getComponent(i);

@@ -31,6 +31,17 @@ export abstract class Reaction {
      * @param reason
      */
     abstract react(reason:Reason):void;
+
+    /**
+     * Установить объект реакции.
+     * 
+     * @param object
+     * @returns {Reaction}
+     */
+    setObject(object:Object3D){
+        this.object = object;
+        return this;
+    }
 }
 
 /**
@@ -51,11 +62,11 @@ export class Reactions extends Reaction {
     /**
      * Все реакции.
      */
-    protected all:Reaction[];
+    protected reactions:Reaction[];
 
     /** @inheritDoc */
     setEnabled(enabled:boolean) {
-        this.all.forEach((one:Reaction) => {
+        this.reactions.forEach((one:Reaction) => {
             one.setEnabled(enabled);
         });
         return super.setEnabled(enabled);
@@ -66,8 +77,8 @@ export class Reactions extends Reaction {
      *
      * @param reaction
      */
-    add(reaction:Reaction) {
-        this.all.push(reaction);
+    addReaction(reaction:Reaction) {
+        this.reactions.push(reaction);
     }
 
     /**
@@ -76,7 +87,7 @@ export class Reactions extends Reaction {
      * @param one
      */
     remove(one:Reaction) {
-        this.all = this.all.filter((reaction) => reaction != one);
+        this.reactions = this.reactions.filter((reaction) => reaction != one);
     }
 
     /**
@@ -85,7 +96,7 @@ export class Reactions extends Reaction {
      * @param reason
      */
     cause(reason:Reason) {
-        this.all
+        this.reactions
             .filter((reaction) => reason.event == reaction.event && reason.object == reaction.object)
             .forEach((reaction) => reaction.react(reason));
 
@@ -95,16 +106,25 @@ export class Reactions extends Reaction {
     /** @inheritDoc */
     react(reason:Reason) {
         // Вызвать реакцию:
-        this.all.forEach((one) => one.react(reason));
+        this.reactions.forEach((one) => one.react(reason));
     }
 
     /**
      * Получить объекты.
      * @param event
      */
-    getObjects(event:EventType) {
+    getReactions(event:EventType):Reaction[] {
         // Получаем реакции по типу события и для каждой реакции получаем объект:
-        this.all.filter((reaction) => reaction.event == event).map((reaction) => reaction.object);
+        let result = this.reactions.filter((reaction) => reaction.event == event);
+
+        // Получаем дочерние реакции:
+        this.reactions
+            .filter((reaction:Reaction) => reaction instanceof Reactions)
+            .forEach((reactions:Reactions) => {
+                reactions = reactions.concat(reactions.getReactions(event));
+            });
+
+        return result;
     }
 
     /**
@@ -116,18 +136,18 @@ export class Reactions extends Reaction {
      */
     causeAll(reason:Reason, modifier:ReasonModifier) {
         // Получаем объекты:
-        let objects = this.getObjects(reason.event);
+        let reactions = this.getReactions(reason.event);
 
         // Модифицируем список объектов:
-        objects = modifier.modifyAll(reason, objects);
+        reactions = modifier.modifyAll(reason, reactions);
 
         // Для каждого объекат:
-        for (let object of objects) {
+        for (let object of reactions) {
             // Устанавливаем объект для причины:
             reason.setObject(object);
 
             // Вызываем реакцию для одного объекта:
-            if (this.causeWithModifier(reason) === true) {
+            if (this.causeWithModifier(reason, modifier) === true) {
                 break;
             }
         }
@@ -142,7 +162,7 @@ export class Reactions extends Reaction {
      * @param modifier
      * @returns {boolean}
      */
-    protected causeWithModifier(reason:MouseReason, modifier:ReasonModifier) {
+    protected causeWithModifier(reason:Reason, modifier:ReasonModifier) {
         // Модифицируем причину для каждого объекта:
         modifier.modify(reason);
 
@@ -448,8 +468,8 @@ class KeyboardPasser extends EventPasser {
  * Пробрасыватель событий клавиатуры.
  */
 export class KeyboardPassers extends EventPassers {
-    constructor(protected $window:JQuery, eventManager:Reactions) {
-        super(eventManager);
+    constructor(protected $window:JQuery, reactions:Reactions) {
+        super(reactions);
 
         this.all = [
             new KeyboardPasser('keydown', EventType.KeyDown, $window),
@@ -620,9 +640,9 @@ abstract class ReasonModifier {
      * Модифицировать все объекты данного типа.
      *
      * @param reason
-     * @param objects
+     * @param reactions
      */
-    abstract modifyAll(reason:Reason, objects:Object3D[]):Object3D[];
+    abstract modifyAll(reason:Reason, reactions:Reaction[]):Reaction[];
 }
 
 /**
@@ -688,9 +708,12 @@ class MouseModifier extends ReasonModifier {
     }
 
     /** @inheritDoc */
-    modifyAll(data:Reason, objects:Object3D[]):Object3D[] {
+    modifyAll(reason:Reason, reactions:Reaction[]):Reaction[] {
+        // Устанавливаем реакции:
+        this.setReactions(reactions);
+
         // Устанавливаем пересечения и вовзвращаем их объекты:
-        return this.setObjectsIntersections(objects).map((intersection:Intersection) => intersection.object);
+        return this.intersections.map((intersection:Intersection) => intersection.object);
     }
 
     /**
@@ -698,18 +721,19 @@ class MouseModifier extends ReasonModifier {
      *
      * @param objects
      */
-    protected setObjectsIntersections(objects:Object3D[]):Intersection[] {
+    protected setReactions(reactions:Reaction[]):Intersection[] {
+
         // Сбрасываем пересечения.
         this.intersections = [];
 
         // Получаем пересечения.
-        for (let object of objects) {
-            if (!object) {
+        for (let reaction of reactions) {
+            if (!reaction || !reaction.object) {
                 continue;
             }
 
             // Получаем пересечение:
-            let intersection = this.mouseEvents.raycaster.getFirstIntersection(object);
+            let intersection = this.mouseEvents.raycaster.getFirstIntersection(reaction.object);
 
             // Пересечения нет или нет точки пересечения:
             if (!intersection || !intersection.point) {

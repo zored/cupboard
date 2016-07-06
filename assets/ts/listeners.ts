@@ -38,107 +38,27 @@ import {
 import {SectionsAmountInput, Input, ObjectSizeInput, SectionSizeInput} from "./form";
 
 /**
- * Слушатель набора секций.
+ * Реакции секций.
  */
-export class SectionsListener extends Reactions {
+export class SectionsReactions extends Reactions {
     /**
-     * Слушатели для каждого из разделов.
-     *
-     * @type SectionListener[]
-     */
-    protected listeners:SectionListener[] = [];
-
-    /**
-     * Секции
-     *
-     * @type Sections
-     */
-    protected sections:Sections;
-    
-    /**
-     * Поле для ввода количества стен.
-     */
-    protected amountInput:SectionsAmountInput;
-
-    constructor(protected eventManager:EventManager) {
-        super();
-        this.amountInput = this.createAmountInput();
-    }
-    
-    protected createAmountInput(){
-        return new SectionsAmountInput(this);
-    }
-
-    /**
-     * Установить секции
+     * Установить новые секции.
      *
      * @param sections
      */
     setSections(sections:Sections) {
-        this.enable(false);
-        this.sections = sections;
-        this.sections.getAll().forEach(this.addListener);
-        this.enable(true);
-        this.amountInput.setValue(sections.getAmount());
+        this.reactions = [];
+        this.setObject(sections);
+        sections.getAll().forEach((section) => this.addSection)
         return this;
     }
-
-    /**
-     * Добавить событие для одной секции.
-     *
-     * @param section
-     */
-    protected addListener = (section:Section) => {
-        // Создаём событие для секции:
-        this.pushListener(new SectionListener(this.eventManager, section, this.sections));
-    };
-
-    /**
-     * Добавить слушателя.
-     *
-     * @param listener
-     */
-    protected pushListener(listener:SectionListener){
-        // Устанавливаем последнему слушателю данный как следующий:
-        this.setNextToLastListener(listener);
-
-        // Добавляем его в массив:
-        this.listeners.push(listener);
-    }
-
-
-    /**
-     * Установить полследнему слушателю текущий как следующий.
-     *
-     * @param listener
-     */
-    protected setNextToLastListener(listener:SectionListener){
-        let last = this.listeners.pop();
-        if (!last) {
-            return;
-        }
-        last.setNextSectionListener(listener);
-        this.listeners.push(last);
-    }
-
-    /** @inheritDoc */
-    listen(add:boolean = true):void {
-        this.listeners.forEach((event:SectionListener) => event.enable(add));
-    }
-
-    /**
-     * Установить количество секций.
-     *
-     * @param amount
-     */
-    setAmount(amount:number) {
-        this.amountInput.setValue(amount);
-        this.sections.setAmount(amount);
-        this.setSections(this.sections);
+    
+    protected addSection(section:Section){
+        this.addReaction(new SectionReaction(section));
     }
 }
 
-class ShelfSectionsListener extends SectionsListener{
+class ShelfSectionsListener extends SectionsReactions{
     protected createAmountInput():SectionsAmountInput {
         return super.createAmountInput().setPrefix('полок');
     }
@@ -147,46 +67,14 @@ class ShelfSectionsListener extends SectionsListener{
 /**
  * Слушатель для коллекции стен.
  */
-export class WallSectionsListener extends SectionsListener {
-    /**
-     * Слушатели стен
-     */
-    protected shelfListeners:SectionsListener[];
-
-    constructor(eventManager:EventManager) {
-        super(eventManager);
-        this.amountInput.setPrefix('секций');
-    }
-
-    /** @inheritDoc */
-    setSections(sections:Sections) {
-        this.shelfListeners = (sections as WallSections)
-            .getShelfSections()
-            .map((sections:ShelfSections) => (new ShelfSectionsListener(this.eventManager)).setSections(sections));
-        super.setSections(sections);
-        return this;
-    }
-
-    /** @inheritDoc */
-    listen(add:boolean = true):void {
-        super.enable(add);
-        for (let listener of this.shelfListeners) {
-            listener.enable(add);
-        }
-    }
-
-    /** @inheritDoc */
-    setAmount(amount:number) {
-        super.setAmount(amount);
-        let sections = this.sections as WallSections;
-        sections.getShelfSections()
-    }
+export class WallSectionsReactions extends SectionsReactions {
+    
 }
 
 /**
  * Слушатель коллекции дверей.
  */
-export class DoorsSectionsListener extends SectionsListener {
+export class DoorSectionsReactions extends SectionsReactions {
     /**
      * Обработчик при отпускании кнопки на клавиатуре.
      */
@@ -196,15 +84,6 @@ export class DoorsSectionsListener extends SectionsListener {
         super(eventManager);
 
         this.amountInput.setPrefix('дверей');
-        
-        // Заменяем событие добавления секции:
-        this.addListener = (door:SlideDoorSection) => {
-            // Создаём событие для секции:
-            let doors = this.sections as DoorSections;
-
-            // Добавляем его в массив:
-            this.pushListener(new SlideDoorListener(this.eventManager, door, doors));
-        };
     }
     
     /** @inheritDoc */
@@ -223,9 +102,9 @@ export class DoorsSectionsListener extends SectionsListener {
 }
 
 /**
- * Слушатель секции.
+ * Рекция секции.
  */
-class SectionListener extends Reactions {
+class SectionReaction extends Reactions {
     protected onWallDown:SectionWallMouseHandler;
     protected onPlaneUp:SectionWallMouseHandler;
     protected onPlaneMove:SectionPlaneMouseMoveHandler;
@@ -249,7 +128,7 @@ class SectionListener extends Reactions {
         this.onPlaneMove = new SectionPlaneMouseMoveHandler(section, sections, this.sizeInput);
     }
 
-    setNextSectionListener(next:SectionListener){
+    setNextSectionListener(next:SectionReaction){
         let nextInput = next.sizeInput;
         this.onPlaneMove.nextSizeInput = nextInput;
         this.sizeInput.setNext(nextInput);
@@ -280,7 +159,7 @@ class SectionListener extends Reactions {
 /**
  * Слушатель двери.
  */
-class OpenDoorListener extends SectionListener {
+class OpenDoorListener extends SectionReaction {
 
     protected onWoodUp:OpenDoorMouseUpHandler;
 
@@ -303,7 +182,7 @@ class OpenDoorListener extends SectionListener {
 /**
  * Слушатель двери.
  */
-class SlideDoorListener extends SectionListener {
+class SlideDoorListener extends SectionReaction {
 
     protected onWoodUp:OpenDoorMouseUpHandler;
 

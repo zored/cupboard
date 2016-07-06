@@ -28,8 +28,8 @@ import {
 } from "./event";
 
 import {
-    WallSectionsListener,
-    DoorsSectionsListener,
+    WallSectionsReactions,
+    DoorSectionsReactions,
     CupboardHandlerSet
 } from "./listeners";
 
@@ -52,33 +52,34 @@ export class Scene extends ThreeScene {
     }
 
     // Заполнить сцену объектами
-    fill(eventManager:EventManager) {
+    fill() {
         this.cupboard = new Cupboard();
         this.cupboard.add(this.clickPlane);
         this.adds(this.cupboard, new Lights());
-        this.setListeners(eventManager, this.cupboard);
+        return this;
     }
 
     /**
      * Установить слушателей.
      *
-     * @param eventManager
-     * @param cupboard
+     * @param reactions
      */
-    protected setListeners(eventManager:EventManager, cupboard:Cupboard) {
+    fillReactions(reactions:Reactions) {
         // Слушатели дверей и стен:
-        let walls = (new WallSectionsListener(eventManager)),
-            doors = (new DoorsSectionsListener(eventManager));
+        let walls = (new WallSectionsReactions(reactions)),
+            doors = (new DoorSectionsReactions(reactions));
 
         // Устанавливаем массив слушателей:
         this.listeners = [
-            new CupboardHandlerSet(cupboard, eventManager),
-            walls.setSections(cupboard.sections),
-            doors.setSections(cupboard.doors),
+            new CupboardHandlerSet(this.cupboard, reactions),
+            walls.setSections(this.cupboard.sections),
+            doors.setSections(this.cupboard.doors),
         ].concat();
 
         // Получаем секции полок:
         this.listeners.forEach((events:Reactions) => events.enable(true));
+        
+        return this;
     }
 
     // Добавить все объекты
@@ -1019,11 +1020,7 @@ export class Cupboard extends Object3D implements Resizable {
         this.doors = new DoorSections(size, thickness, this.getRandomSectionAmount());
 
         // Добавляем объекты, которые будут изменять свой размер:
-        this.resizables.push(
-            this.walls,
-            this.sections,
-            this.doors
-        );
+        this.resizables.push(this.walls, this.sections, this.doors);
 
         this.add(this.walls);
         this.add(this.sections);
