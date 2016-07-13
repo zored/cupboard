@@ -34,11 +34,11 @@ export abstract class Reaction {
 
     /**
      * Установить объект реакции.
-     * 
+     *
      * @param object
      * @returns {Reaction}
      */
-    setObject(object:Object3D){
+    setObject(object:Object3D) {
         this.object = object;
         return this;
     }
@@ -113,18 +113,26 @@ export class Reactions extends Reaction {
      * Получить объекты.
      * @param event
      */
-    getReactions(event:EventType):Reaction[] {
+    filterByEvent(event:EventType = null):Reactions {
         // Получаем реакции по типу события и для каждой реакции получаем объект:
-        let result = this.reactions.filter((reaction) => reaction.event == event);
+        let filtered = new Reactions(this.event, this.object, this.enabled);
 
-        // Получаем дочерние реакции:
+        // Функция добавления реакции:
+        let addReaction = reaction => filtered.addReaction(reaction);
+
+        // Добавляем реакции по типу события:
         this.reactions
-            .filter((reaction:Reaction) => reaction instanceof Reactions)
-            .forEach((reactions:Reactions) => {
-                reactions = reactions.concat(reactions.getReactions(event));
-            });
+            .filter(reaction => reaction.event == event)
+            .forEach(addReaction);
 
-        return result;
+        // Добавляем дочерние реакции:
+        this.reactions
+            .filter(reaction => reaction instanceof Reactions)
+            .map((reactions:Reactions) => reactions.filterByEvent(event))
+            .forEach(addReaction);
+
+        // Получаем отфильтрованные реакции:
+        return filtered;
     }
 
     /**
@@ -135,11 +143,11 @@ export class Reactions extends Reaction {
      * @returns {MousePassers}
      */
     causeAll(reason:Reason, modifier:ReasonModifier) {
-        // Получаем объекты:
-        let reactions = this.getReactions(reason.event);
+        // Получаем реакции по событию:
+        let reactions = this.filterByEvent(reason.event);
 
-        // Модифицируем список объектов:
-        reactions = modifier.modifyAll(reason, reactions);
+        // Модифицируем список реакций:
+        modifier.modifyReactions(reason, reactions);
 
         // Для каждого объекат:
         for (let object of reactions) {
@@ -183,6 +191,67 @@ export class Reactions extends Reaction {
         // Остановить дальнейшее выполнение:
         reason.stop = false;
         return true;
+    }
+
+    setReactions(reactions:Reaction[]) {
+        this.reactions = reactions;
+    }
+}
+
+class ReactionsIntersections {
+    protected intersections:ReactionIntersection[];
+
+    constructor(protected reactions:Reactions) {
+    }
+
+    /**
+     * Получить пересечения для реакций.
+     *
+     * @param raycaster
+     */
+    intersect(raycaster:MouseRaycaster) {
+        this.intersections = this.reactions
+            .filterByEvent()
+            .map(reaction => new ReactionIntersection(reaction));
+    }
+
+    sort() {
+        let reactions = this.intersections
+            .sort((a, b) => a.distance - b.distance)
+            .map(intersection => intersection.reaction);
+
+        this.reactions.setReactions(reactions);
+    }
+}
+
+/**
+ * Пересечение объекта реакции.
+ */
+class ReactionIntersection {
+    public intersection:Intersection;
+
+    public distance:number = 0;
+
+    constructor(public reaction:Reaction) {
+
+    }
+
+    intersect(raycaster:MouseRaycaster) {
+        // Нет такой реакции или у реакции нет объекта:
+        if (!this.reaction || !this.reaction.object) {
+            return this;
+        }
+
+        // Получаем пересечение:
+        this.intersection = raycaster.getFirstIntersection(this.reaction.object);
+
+        // Пересечения нет - выходим:
+        if (!this.intersection) {
+            return this;
+        }
+
+        // Устанавливаем расстояние до пересечения:
+        this.distance = this.intersection.distance;
     }
 }
 
@@ -637,12 +706,12 @@ abstract class ReasonModifier {
     abstract modify(data:Reason):Reason;
 
     /**
-     * Модифицировать все объекты данного типа.
+     * Изменить набор реакций.
      *
      * @param reason
      * @param reactions
      */
-    abstract modifyAll(reason:Reason, reactions:Reaction[]):Reaction[];
+    abstract modifyReactions(reason:Reason, reactions:Reactions):ReasonModifier;
 }
 
 /**
@@ -654,7 +723,7 @@ class MouseModifier extends ReasonModifier {
      *
      * @type {Array}
      */
-    protected intersections:Intersection[] = [];
+    protected intersections:ReactionsIntersections;
 
     /**
      * Пересечение для объекта, на который мы навели указатель мыши.
@@ -670,6 +739,11 @@ class MouseModifier extends ReasonModifier {
      * Предыдущий объект, на котором была мышь.
      */
     protected previousFirstIntersection:Intersection;
+
+    /**
+     * Реакции
+     */
+    private reactions:Reactions;
 
     constructor(protected mouseEvents:MousePassers) {
         super();
@@ -708,50 +782,26 @@ class MouseModifier extends ReasonModifier {
     }
 
     /** @inheritDoc */
-    modifyAll(reason:Reason, reactions:Reaction[]):Reaction[] {
-        // Устанавливаем реакции:
-        this.setReactions(reactions);
+    modifyReactions(reason:Reason, reactions:Reactions) {
 
-        // Устанавливаем пересечения и вовзвращаем их объекты:
-        return this.intersections.map((intersection:Intersection) => intersection.object);
+        this.intersections = (new ReactionsIntersections(reactions))
+            .intersect(this.mouseEvents.raycaster)
+            .sort();
+
+        // Установить слушателя наведения и увода мыши:
+        this.setEnterLeave();
+
+        return this;
     }
 
     /**
      * Установить пересечения для каждого из объектов.
      *
-     * @param objects
+     * @param reactions
      */
-    protected setReactions(reactions:Reaction[]):Intersection[] {
+    protected setReactions(reactions:Reactions) {
 
-        // Сбрасываем пересечения.
-        this.intersections = [];
-
-        // Получаем пересечения.
-        for (let reaction of reactions) {
-            if (!reaction || !reaction.object) {
-                continue;
-            }
-
-            // Получаем пересечение:
-            let intersection = this.mouseEvents.raycaster.getFirstIntersection(reaction.object);
-
-            // Пересечения нет или нет точки пересечения:
-            if (!intersection || !intersection.point) {
-                continue;
-            }
-
-            // Добавляем пересечение:
-            this.intersections.push(intersection);
-        }
-
-        // Сортируем от ближайшего до самого удалённого:
-        let closeToFar = (a:Intersection, b:Intersection) => a.distance - b.distance;
-        this.intersections.sort(closeToFar);
-
-        // Установить слушателя наведения и увода мыши:
-        this.setEnterLeave();
-
-        return this.intersections;
+        return this;
     }
 
     /**
