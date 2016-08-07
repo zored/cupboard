@@ -1,7 +1,7 @@
 // В этом файле собраны классы для работы с событиями.
 
-import {Camera, Canvas} from "./common";
-import {BigPlane} from "./scene";
+import {Camera, Canvas, World} from "./common";
+import {BigPlane, Scene} from "./scene";
 import {Object3D, Vector2, Intersection, Raycaster} from "three";
 
 /**
@@ -52,32 +52,18 @@ export abstract class Reaction {
  * - Массово включить / отключить реакции.
  * - Массово вызывать реакции.
  */
-export class Reactions extends Reaction {
-    constructor(public event:EventType = null,
-                public object:Object3D = null,
-                public enabled = true) {
-        super(event, object, enabled);
-    }
-
+export class ReactionCollection {
     /**
      * Все реакции.
      */
     protected reactions:Reaction[];
-
-    /** @inheritDoc */
-    setEnabled(enabled:boolean) {
-        this.reactions.forEach((one:Reaction) => {
-            one.setEnabled(enabled);
-        });
-        return super.setEnabled(enabled);
-    }
 
     /**
      * Добавить реакцию.
      *
      * @param reaction
      */
-    addReaction(reaction:Reaction) {
+    add(reaction:Reaction) {
         this.reactions.push(reaction);
     }
 
@@ -87,7 +73,11 @@ export class Reactions extends Reaction {
      * @param one
      */
     remove(one:Reaction) {
-        this.reactions = this.reactions.filter((reaction) => reaction != one);
+        let index = this.reactions.indexOf(one);
+        if (index == -1) {
+            return this;
+        }
+        this.reactions.splice(index, 1);
     }
 
     /**
@@ -96,43 +86,21 @@ export class Reactions extends Reaction {
      * @param reason
      */
     cause(reason:Reason) {
+        // Вызываем реакции для установленного типа события и объекта:
         this.reactions
-            .filter((reaction) => reason.event == reaction.event && reason.object == reaction.object)
-            .forEach((reaction) => reaction.react(reason));
+            .filter(reaction => reason.event == reaction.event && reason.object == reaction.object)
+            .forEach(reaction => reaction.react(reason) == false);
 
         return this;
-    }
-
-    /** @inheritDoc */
-    react(reason:Reason) {
-        // Вызвать реакцию:
-        this.reactions.forEach((one) => one.react(reason));
     }
 
     /**
      * Получить объекты.
      * @param event
      */
-    filterByEvent(event:EventType = null):Reactions {
-        // Получаем реакции по типу события и для каждой реакции получаем объект:
-        let filtered = new Reactions(this.event, this.object, this.enabled);
-
-        // Функция добавления реакции:
-        let addReaction = reaction => filtered.addReaction(reaction);
-
+    filterByEvent(event:EventType):Reaction[]{
         // Добавляем реакции по типу события:
-        this.reactions
-            .filter(reaction => reaction.event == event)
-            .forEach(addReaction);
-
-        // Добавляем дочерние реакции:
-        this.reactions
-            .filter(reaction => reaction instanceof Reactions)
-            .map((reactions:Reactions) => reactions.filterByEvent(event))
-            .forEach(addReaction);
-
-        // Получаем отфильтрованные реакции:
-        return filtered;
+        return this.reactions.filter(reaction => reaction.event == event);
     }
 
     /**
@@ -140,7 +108,7 @@ export class Reactions extends Reaction {
      *
      * @param reason
      * @param modifier
-     * @returns {MousePassers}
+     * @returns {MousePasserCollection}
      */
     causeAll(reason:Reason, modifier:ReasonModifier) {
         // Получаем реакции по событию:
@@ -198,10 +166,15 @@ export class Reactions extends Reaction {
     }
 }
 
+/**
+ * Пересечения объектов реакций с лучом.
+ */
 class ReactionsIntersections {
     protected intersections:ReactionIntersection[];
 
-    constructor(protected reactions:Reactions) {
+    constructor(protected reactions:Reaction[]) {
+        // Для каждой реакции создаём объект пересечения:
+        this.intersections = this.reactions.map(reaction => (new ReactionIntersection(reaction)));
     }
 
     /**
@@ -210,26 +183,41 @@ class ReactionsIntersections {
      * @param raycaster
      */
     intersect(raycaster:MouseRaycaster) {
-        this.intersections = this.reactions
-            .filterByEvent()
-            .map(reaction => new ReactionIntersection(reaction));
+        this.intersections.forEach(intersection => intersection.intersect(raycaster));
+        return this;
     }
 
     sort() {
-        let reactions = this.intersections
+        this.reactions = this.intersections
             .sort((a, b) => a.distance - b.distance)
             .map(intersection => intersection.reaction);
+    }
 
-        this.reactions.setReactions(reactions);
+    /**
+     * Получить пересечение по объекту.
+     *
+     * @param object
+     * @returns {ReactionIntersection[]}
+     */
+    getByObject(object:Object3D) {
+        return this.intersections.filter(intersection => intersection.reaction.object == object);
     }
 }
 
 /**
- * Пересечение объекта реакции.
+ * Пересечение объекта реакции с лучом.
  */
 class ReactionIntersection {
+    /**
+     * Пересечение объекта с лучом указателя мыши.
+     */
     public intersection:Intersection;
 
+    /**
+     * Расстояние до пересечения.
+     *
+     * @type {number}
+     */
     public distance:number = 0;
 
     constructor(public reaction:Reaction) {
@@ -252,6 +240,8 @@ class ReactionIntersection {
 
         // Устанавливаем расстояние до пересечения:
         this.distance = this.intersection.distance;
+
+        return this;
     }
 }
 
@@ -306,10 +296,10 @@ class MouseRaycaster extends Raycaster {
 // EventPasser
 
 /**
- * Преобразовывает событие в реакцию.
+ * Преобразовывабт события в реакции.
  */
-export abstract class EventPassers {
-    constructor(protected reactions:Reactions) {
+export abstract class EventPasserCollection {
+    constructor(protected reactions:ReactionCollection) {
     }
 
     /**
@@ -323,8 +313,7 @@ export abstract class EventPassers {
      * Начать слушать за событиями.
      */
     listen() {
-        // Прослушиваем каждый пробрасыватель:
-        this.all.forEach((passer) => passer.setPassers(this).listen());
+        this.all.forEach((passer) => passer.setCollection(this).listen());
 
         return this;
     }
@@ -342,7 +331,7 @@ export abstract class EventPassers {
 /**
  * Пробрасыватель событий мыши.
  */
-export class MousePassers extends EventPassers {
+export class MousePasserCollection extends EventPasserCollection {
     /**
      * Испускает луч от мыши в сторону объекта.
      */
@@ -356,7 +345,7 @@ export class MousePassers extends EventPassers {
     constructor(protected canvas:Canvas,
                 public plane:BigPlane,
                 protected camera:Camera,
-                reactions:Reactions) {
+                reactions:ReactionCollection) {
         super(reactions);
         this.raycaster = new MouseRaycaster(camera);
         this.modifier = new MouseModifier(this);
@@ -436,7 +425,7 @@ abstract class EventPasser {
     /**
      * Хранилище пробрасывателей, которому принадлежит объект.
      */
-    public passers:EventPassers;
+    public passers:EventPasserCollection;
 
     constructor(protected jqEvent:string,
                 protected event:EventType,
@@ -455,7 +444,7 @@ abstract class EventPasser {
      * @param passers
      * @returns {EventPasser}
      */
-    setPassers(passers:EventPassers) {
+    setCollection(passers:EventPasserCollection) {
         this.passers = passers;
 
         return this;
@@ -536,8 +525,8 @@ class KeyboardPasser extends EventPasser {
 /**
  * Пробрасыватель событий клавиатуры.
  */
-export class KeyboardPassers extends EventPassers {
-    constructor(protected $window:JQuery, reactions:Reactions) {
+export class KeyboardPasserCollection extends EventPasserCollection {
+    constructor(protected $window:JQuery, reactions:ReactionCollection) {
         super(reactions);
 
         this.all = [
@@ -646,13 +635,16 @@ export class Reason {
  * Данные, передаваемые при нажатия мыши.
  */
 export class MouseReason extends Reason {
-    protected intersection:Intersection;
+    /**
+     * Пересечение мыши
+     */
+    protected intersection:ReactionIntersection;
     protected planeIntersection:Intersection;
     public mouse:Vector2;
 
     constructor(event:EventType,
-                object:THREE.Object3D = null,
-                planeIntersection:THREE.Intersection = null) {
+                object:Object3D = null,
+                planeIntersection:Intersection = null) {
         super(event, object);
         this.planeIntersection = planeIntersection;
     }
@@ -674,7 +666,7 @@ export class MouseReason extends Reason {
      * @param intersection
      * @returns {MouseReason}
      */
-    setIntersection(intersection:Intersection):MouseReason {
+    setIntersection(intersection:ReactionIntersection):MouseReason {
         this.intersection = intersection;
         return this;
     }
@@ -711,7 +703,7 @@ abstract class ReasonModifier {
      * @param reason
      * @param reactions
      */
-    abstract modifyReactions(reason:Reason, reactions:Reactions):ReasonModifier;
+    abstract modifyReactions(reason:Reason, reactions:Reaction[]):ReasonModifier;
 }
 
 /**
@@ -743,9 +735,9 @@ class MouseModifier extends ReasonModifier {
     /**
      * Реакции
      */
-    private reactions:Reactions;
+    private reactions:ReactionCollection;
 
-    constructor(protected mouseEvents:MousePassers) {
+    constructor(protected mouseEvents:MousePasserCollection) {
         super();
     }
 
@@ -758,7 +750,7 @@ class MouseModifier extends ReasonModifier {
         }
 
         // Получаем пересечение с мышью:
-        let intersection = this.getIntersectionByObject(reason.object);
+        let intersection = this.intersections.getByObject(reason.object);
 
         // Пересечения нет - пропускаем.
         if (!intersection) {
@@ -782,11 +774,9 @@ class MouseModifier extends ReasonModifier {
     }
 
     /** @inheritDoc */
-    modifyReactions(reason:Reason, reactions:Reactions) {
-
-        this.intersections = (new ReactionsIntersections(reactions))
-            .intersect(this.mouseEvents.raycaster)
-            .sort();
+    modifyReactions(reason:Reason, reactions:Reaction[]) {
+        // Создаём пересечения объектов реакций с лучом мыши и сортируем их.
+        this.intersections = (new ReactionsIntersections(reactions)).intersect(this.mouseEvents.raycaster).sort();
 
         // Установить слушателя наведения и увода мыши:
         this.setEnterLeave();
@@ -799,7 +789,7 @@ class MouseModifier extends ReasonModifier {
      *
      * @param reactions
      */
-    protected setReactions(reactions:Reactions) {
+    protected setReactions(reactions:ReactionCollection) {
 
         return this;
     }
@@ -844,5 +834,26 @@ class MouseModifier extends ReasonModifier {
             intersection = this.intersections[1];
         }
         return intersection;
+    }
+}
+
+/**
+ * Менеджер пробрасывания событий из канваса в реакции.
+ */
+export class EventPasserManager{
+    protected passerCollections:EventPasserCollection[] = [];
+
+    constructor(world:World){
+        this.passerCollections = [
+            new MousePasserCollection(world.canvas, world.scene.getClickPlane(), world.camera, world.reactions),
+            new KeyboardPasserCollection(world.canvas.$window, world.reactions)
+        ];
+    }
+
+    /**
+     * Слушать события всех пробрасывателей.
+     */
+    listen(){
+        this.passerCollections.forEach((passers:EventPasserCollection) => passers.listen());
     }
 }

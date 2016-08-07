@@ -21,7 +21,7 @@ import {
 
 import {
     CupboardHandlerSet,
-    SectionsReactions
+    SectionsReactionCollection
 } from "./listeners";
 
 import {
@@ -130,11 +130,11 @@ export class WallMouseDownHandler extends AbstractCupboardHandler {
 /**
  * Обработчик событий мыши секции стены.
  */
-export class SectionWallMouseHandler extends Reaction {
+export class SectionWallMouseReaction extends Reaction {
     constructor(protected section:Section,
                 protected sections:Sections,
                 public eventType:EventType) {
-        super();
+        super(eventType, section);
     }
 
     handle(data:Reason) {
@@ -551,7 +551,7 @@ export class SectionSizeInputHandler extends ObjectSizeInputHandler{
  * Обработчик для установки размера шкафа из поля ввода.
  */
 export class SectionAmountInputHandler extends InputHandler{
-    constructor(protected sectionsListener:SectionsReactions) {
+    constructor(protected sectionsListener:SectionsReactionCollection) {
         super();
     }
 

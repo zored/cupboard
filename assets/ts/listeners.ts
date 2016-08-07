@@ -5,110 +5,45 @@ import {
     CupboardPlaneMouseDownHandler,
     CupboardKeyHandler,
     DoorKeyUpHandler,
-    SectionWallMouseHandler,
+    SectionWallMouseReaction,
     SectionPlaneMouseMoveHandler,
-    OpenDoorMouseUpHandler, WoodMouseToggleHandler, SlideDoorPlaneMouseMoveHandler
+    OpenDoorMouseUpHandler,
+    WoodMouseToggleHandler,
+    SlideDoorPlaneMouseMoveHandler
 } from "./handlers";
-
-import {
-    Vector3
-} from "three";
-
-import {
-    Cupboard,
-    Sections,
-    Section,
-    WallSections,
-    ShelfSections,
-    DoorSections,
-    Wood,
-    SlideDoorSection,
-    OpenDoorSection,
-} from "./scene";
-
-import {
-    EventType,
-    EventManager,
-    Reactions
-} from "./event";
-
-import {
-    Coordinate
-} from "./common";
-import {SectionsAmountInput, Input, ObjectSizeInput, SectionSizeInput} from "./form";
-
-/**
- * Реакции секций.
- */
-export class SectionsReactions extends Reactions {
-    /**
-     * Установить новые секции.
-     *
-     * @param sections
-     */
-    setSections(sections:Sections) {
-        this.reactions = [];
-        this.setObject(sections);
-        sections.getAll().forEach((section) => this.addSection)
-        return this;
-    }
-    
-    protected addSection(section:Section){
-        this.addReaction(new SectionReaction(section));
-    }
-}
-
-class ShelfSectionsListener extends SectionsReactions{
-    protected createAmountInput():SectionsAmountInput {
-        return super.createAmountInput().setPrefix('полок');
-    }
-}
-
-/**
- * Слушатель для коллекции стен.
- */
-export class WallSectionsReactions extends SectionsReactions {
-    
-}
-
-/**
- * Слушатель коллекции дверей.
- */
-export class DoorSectionsReactions extends SectionsReactions {
-    /**
-     * Обработчик при отпускании кнопки на клавиатуре.
-     */
-    protected keyUp:DoorKeyUpHandler;
-
-    constructor(eventManager:EventManager) {
-        super(eventManager);
-
-        this.amountInput.setPrefix('дверей');
-    }
-    
-    /** @inheritDoc */
-    setSections(sections:Sections) {
-        let doors = sections as DoorSections;
-        this.keyUp = new DoorKeyUpHandler(doors);
-        super.setSections(sections);
-        return this;
-    }
-
-    /** @inheritDoc */
-    listen(add:boolean = true):void {
-        super.enable(add);
-        this.eventManager.toggle(EventType.KeyUp, null, this.keyUp, add);
-    }
-}
+import {Vector3} from "three";
+import {Cupboard, Sections, Section, DoorSections, Wood, SlideDoorSection, OpenDoorSection} from "./scene";
+import {EventType, EventManager, ReactionCollection} from "./event";
+import {Coordinate} from "./common";
+import {SectionsAmountInput, SectionSizeInput} from "./form";
 
 /**
  * Рекция секции.
  */
-class SectionReaction extends Reactions {
-    protected onWallDown:SectionWallMouseHandler;
-    protected onPlaneUp:SectionWallMouseHandler;
-    protected onPlaneMove:SectionPlaneMouseMoveHandler;
+export class SectionReactions extends ReactionCollection{
+    /**
+     * Нажатиие мыши на стенке секции.
+     */
+    protected onWallDown:SectionWallMouseReaction;
+
+    /**
+     * Отпускаем мышь.
+     */
+    protected onPlaneUp:SectionWallMouseReaction;
+
+    /**
+     * Движение мыши.
+     */
+    protected onMove:SectionPlaneMouseMoveHandler;
+
+    /**
+     * Наведение мыши на стене.
+     */
     protected onWoodHover:WoodMouseToggleHandler;
+
+    /**
+     * Поле для ввода размера.
+     */
     public sizeInput:SectionSizeInput;
 
     constructor(protected eventManager:EventManager,
@@ -122,15 +57,16 @@ class SectionReaction extends Reactions {
         this.sizeInput.setValue(section.relativeSize * sections.getDirectionSize());
 
         // Задаём обработчики событий.
-        this.onWallDown = new SectionWallMouseHandler(section, sections, EventType.MouseDown);
+        this.onWallDown = new SectionWallMouseReaction(section, sections, EventType.MouseDown);
+
         this.onWoodHover = new WoodMouseToggleHandler(section.wood);
-        this.onPlaneUp = new SectionWallMouseHandler(section, sections, EventType.MouseUp);
-        this.onPlaneMove = new SectionPlaneMouseMoveHandler(section, sections, this.sizeInput);
+        this.onPlaneUp = new SectionWallMouseReaction(section, sections, EventType.MouseUp);
+        this.onMove = new SectionPlaneMouseMoveHandler(section, sections, this.sizeInput);
     }
 
-    setNextSectionListener(next:SectionReaction){
+    setNextSectionListener(next:SectionReaction) {
         let nextInput = next.sizeInput;
-        this.onPlaneMove.nextSizeInput = nextInput;
+        this.onMove.nextSizeInput = nextInput;
         this.sizeInput.setNext(nextInput);
     }
 
@@ -152,7 +88,7 @@ class SectionReaction extends Reactions {
             .toggle(this.onPlaneUp.eventType, this.eventManager.mouse.plane, this.onPlaneUp, add)
             .toggle(EventType.MouseEnter, this.section.wood, this.onWoodHover, add)
             .toggle(EventType.MouseLeave, this.section.wood, this.onWoodHover, add)
-            .toggle(EventType.MouseMove, this.eventManager.mouse.plane, this.onPlaneMove, add);
+            .toggle(EventType.MouseMove, this.eventManager.mouse.plane, this.onMove, add);
     }
 }
 
@@ -190,9 +126,9 @@ class SlideDoorListener extends SectionReaction {
                 protected door:SlideDoorSection,
                 protected doors:DoorSections) {
         super(eventManager, door, doors);
-        this.onPlaneMove = new SlideDoorPlaneMouseMoveHandler(door, doors) as any as SectionPlaneMouseMoveHandler;
+        this.onMove = new SlideDoorPlaneMouseMoveHandler(door, doors) as any as SectionPlaneMouseMoveHandler;
     }
-    
+
     listen(add:boolean = true) {
         super.enable(add);
     }
@@ -201,7 +137,7 @@ class SlideDoorListener extends SectionReaction {
 /**
  * Слушатель для шкафа.
  */
-export class CupboardHandlerSet extends Reactions {
+export class CupboardHandlerSet extends ReactionCollection {
     protected wallDown:WallMouseDownHandler[] = [];
     protected planeMove:CupboardPlaneMouseMoveHandler;
     protected globalUp:CupboardMouseUpHandler;

@@ -1,21 +1,6 @@
-import {
-    EventManager,
-    MousePassers,
-    KeyboardPassers,
-    EventPassers, Reactions,
-} from "./event";
-
-import {
-    Vector2,
-    Vector3,
-    PerspectiveCamera,
-    WebGLRenderer,
-    PCFSoftShadowMap,
-} from "three";
-
-import {
-    Scene,
-} from "./scene";
+import {EventManager, ReactionCollection, EventPasserManager} from "./event";
+import {Vector2, Vector3, PerspectiveCamera, WebGLRenderer, PCFSoftShadowMap} from "three";
+import {Scene} from "./scene";
 import {ObjectSizeInput} from "./form";
 
 /**
@@ -41,17 +26,17 @@ export class World {
     /**
      * Рендер.
      */
-    protected renderer:Renderer;
+    renderer:Renderer;
     
     /**
      * Сцена.
      */
-    protected scene:Scene;
+    scene:Scene;
     
     /**
      * Камера.
      */
-    protected camera:Camera;
+    camera:Camera;
     
     /**
      * Активен ли рендер.
@@ -62,29 +47,32 @@ export class World {
     /**
      * Реакции объектов на сцене.
      */
-    protected reactions:Reactions;
+    reactions:ReactionCollection;
 
-    constructor(protected canvas:Canvas) {
+    constructor(public canvas:Canvas) {
         // Создаём объекты:
-        this.scene = new Scene();
         this.renderer = new Renderer(canvas);
         this.camera = new Camera(canvas);
-        this.reactions = new Reactions();
+        this.reactions = new ReactionCollection();
+
+        // Создаём сцену с объектами и заполняем реакции:
+        this.scene = new Scene(this.reactions);
         
-        // Пробрасываем события мыши и клавиатуры в реакции.
-        [
-            new MousePassers(canvas, this.scene.getClickPlane(), this.camera, this.reactions),
-            new KeyboardPassers(canvas.$window, this.reactions)
-        ].forEach((passers:EventPassers) => passers.listen());
+        // Пробрасываем события мыши и клавиатуры в реакции:
+        (new EventPasserManager(this)).listen();
 
-        // Заполняем сцену объектами
-        this.scene.fill().fillReactions(this.reactions);
+        // Добавляем поля ввода для размера:
+        this.addSizeInputs();
+    }
 
-        for(var i=0; i<3; i++) {
+    /**
+     * Установить
+     */
+    private addSizeInputs() {
+        for (var i = 0; i < 3; i++) {
             let size = this.scene.cupboard.size.getComponent(i);
             (new ObjectSizeInput(this.scene.cupboard, i)).setValue(size);
         }
-        
     }
 
     // Каждый фрейм запускать рендер

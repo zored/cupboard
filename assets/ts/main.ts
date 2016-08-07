@@ -6,13 +6,11 @@ $(() => {
     // Окно:
     let $window = $(window);
 
-    // Создаём холст:
-    let canvas = new Canvas(
-        800,
-        600,
-        $('<canvas>').appendTo(document.body),
-        $window
-    );
+    // Элемент холста:
+    let $canvas = $('<canvas>').appendTo(document.body);
+
+    // Объект холста:
+    let canvas = new Canvas(800, 600, $canvas, $window);
 
     // Запускаем мир:
     (new World(canvas)).start();

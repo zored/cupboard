@@ -24,7 +24,7 @@ import {
 
 import {
     EventManager,
-    Reactions
+    ReactionCollection
 } from "./event";
 
 import {
@@ -43,16 +43,17 @@ import {
  */
 export class Scene extends ThreeScene {
     protected clickPlane:BigPlane;
-    protected listeners:Reactions[];
+    protected listeners:ReactionCollection[];
     public cupboard:Cupboard;
 
-    constructor() {
+    constructor(reactions:ReactionCollection) {
         super();
         this.clickPlane = new BigPlane();
+        this.fillObjects().fillReactions(reactions);
     }
 
     // Заполнить сцену объектами
-    fill() {
+    protected fillObjects() {
         this.cupboard = new Cupboard();
         this.cupboard.add(this.clickPlane);
         this.adds(this.cupboard, new Lights());
@@ -64,21 +65,8 @@ export class Scene extends ThreeScene {
      *
      * @param reactions
      */
-    fillReactions(reactions:Reactions) {
-        // Слушатели дверей и стен:
-        let walls = (new WallSectionsReactions(reactions)),
-            doors = (new DoorSectionsReactions(reactions));
+    fillReactions(reactions:ReactionCollection) {
 
-        // Устанавливаем массив слушателей:
-        this.listeners = [
-            new CupboardHandlerSet(this.cupboard, reactions),
-            walls.setSections(this.cupboard.sections),
-            doors.setSections(this.cupboard.doors),
-        ].concat();
-
-        // Получаем секции полок:
-        this.listeners.forEach((events:Reactions) => events.enable(true));
-        
         return this;
     }
 

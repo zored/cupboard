@@ -2,7 +2,7 @@ import * as $ from "jquery";
 import {ObjectSizeInputHandler, SectionAmountInputHandler, SectionSizeInputHandler} from "./handlers";
 import {Cupboard, Section, Sections} from "./scene";
 import {Coordinate} from "./common";
-import {SectionsReactions} from "./listeners";
+import {SectionsReactionCollection} from "./listeners";
 import Object3D = THREE.Object3D;
 import {AbstractReactions} from "./event";
 
@@ -164,7 +164,7 @@ class CupboardSizeInput extends ObjectSizeInput {
  * Поле для ввода количества секций.
  */
 export class SectionsAmountInput extends NumberInput {
-    constructor(sectionsListener:SectionsReactions) {
+    constructor(sectionsListener:SectionsReactionCollection) {
         super(null);
         this.handler = new SectionAmountInputHandler(sectionsListener);
     }
